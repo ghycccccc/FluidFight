@@ -77,3 +77,4 @@ DerivedDataCache/*
 
 # agents
 .codex/
+.agents/

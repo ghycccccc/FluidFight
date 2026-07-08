@@ -1,0 +1,19 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1.0",
+	"FriendlyName": "Smoke Character",
+	"Description": "Runtime smoke character simulation and rendering plugin for FluidFight.",
+	"Category": "Rendering",
+	"CreatedBy": "FluidFight",
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "SmokeCharacter",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	]
+}
