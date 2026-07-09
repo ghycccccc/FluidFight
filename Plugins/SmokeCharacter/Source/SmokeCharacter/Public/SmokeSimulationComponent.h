@@ -10,7 +10,9 @@ UENUM(BlueprintType)
 enum class ESmokeDebugMode : uint8
 {
 	None UMETA(DisplayName = "None"),
-	Lifecycle UMETA(DisplayName = "Lifecycle")
+	Lifecycle UMETA(DisplayName = "Lifecycle"),
+	DomainBounds UMETA(DisplayName = "Domain Bounds"),
+	Timing UMETA(DisplayName = "Timing")
 };
 
 UCLASS(ClassGroup = (Smoke), meta = (BlueprintSpawnableComponent))
@@ -33,11 +35,35 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Debug")
 	ESmokeDebugMode DebugMode = ESmokeDebugMode::Lifecycle;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Debug")
+	bool bShowDomainPreview = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Debug")
+	FColor DomainPreviewColor = FColor::Cyan;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Debug", meta = (ClampMin = "0.0"))
+	float DomainPreviewThickness = 2.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Debug", meta = (ClampMin = "0.0", ForceUnits = "s"))
+	float DomainPreviewDuration = 0.0f;
+
 	UFUNCTION(BlueprintCallable, Category = "Smoke")
 	void SetSimulationEnabled(bool bEnabled);
 
 	UFUNCTION(BlueprintCallable, Category = "Smoke")
 	void ResetSimulation();
+
+	UFUNCTION(BlueprintCallable, Category = "Smoke|Domain")
+	void UpdateDomainPreview();
+
+	UFUNCTION(BlueprintPure, Category = "Smoke|Domain")
+	FVector GetDomainOrigin() const;
+
+	UFUNCTION(BlueprintPure, Category = "Smoke|Domain")
+	FBox GetDomainBounds() const;
+
+	UFUNCTION(BlueprintPure, Category = "Smoke|Domain")
+	FTransform GetDomainToWorldTransform() const;
 
 protected:
 	virtual void OnRegister() override;
@@ -48,4 +74,6 @@ protected:
 
 private:
 	void LogLifecycleEvent(const TCHAR* EventName) const;
+	void LogDomainTiming(float DeltaTime, double UpdateSeconds) const;
+	FVector GetDomainExtents() const;
 };
