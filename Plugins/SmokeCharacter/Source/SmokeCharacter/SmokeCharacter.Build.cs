@@ -12,7 +12,14 @@ public class SmokeCharacter : ModuleRules
 		{
 			"Core",
 			"CoreUObject",
-			"Engine"
+			"Engine",
+			"RenderCore",
+			"RHI"
+		});
+
+		PrivateDependencyModuleNames.AddRange(new string[]
+		{
+			"Projects"
 		});
 	}
 }

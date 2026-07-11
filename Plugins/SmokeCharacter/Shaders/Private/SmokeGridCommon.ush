@@ -1,0 +1,14 @@
+#ifndef SMOKE_GRID_COMMON_USH
+#define SMOKE_GRID_COMMON_USH
+
+float3 SmokeGrid_GetUVW(uint3 Cell, int3 GridResolution)
+{
+	return (float3(Cell) + 0.5f) / max(float3(GridResolution), 1.0f);
+}
+
+bool SmokeGrid_IsInside(uint3 Cell, int3 GridResolution)
+{
+	return all(Cell < uint3(GridResolution));
+}
+
+#endif

@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "SmokeGrid.h"
 #include "SmokeSimulationComponent.generated.h"
 
 UENUM(BlueprintType)
@@ -13,6 +14,15 @@ enum class ESmokeDebugMode : uint8
 	Lifecycle UMETA(DisplayName = "Lifecycle"),
 	DomainBounds UMETA(DisplayName = "Domain Bounds"),
 	Timing UMETA(DisplayName = "Timing")
+};
+
+UENUM(BlueprintType)
+enum class ESmokeGridPreset : uint8
+{
+	Custom UMETA(DisplayName = "Custom"),
+	Debug32 UMETA(DisplayName = "32 x 32 x 48"),
+	Debug64 UMETA(DisplayName = "64 x 64 x 96"),
+	Target96 UMETA(DisplayName = "96 x 96 x 160")
 };
 
 UCLASS(ClassGroup = (Smoke), meta = (BlueprintSpawnableComponent))
@@ -25,6 +35,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Simulation")
 	bool bSimulationEnabled = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Simulation")
+	ESmokeGridPreset GridPreset = ESmokeGridPreset::Target96;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Simulation")
 	FIntVector GridResolution = FIntVector(96, 96, 160);
@@ -53,6 +66,17 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Smoke")
 	void ResetSimulation();
 
+	UFUNCTION(BlueprintPure, Category = "Smoke|Grid")
+	FIntVector GetEffectiveGridResolution() const;
+
+	FSmokeGridDesc BuildGridDesc() const;
+
+	UFUNCTION(BlueprintCallable, Category = "Smoke|Grid")
+	void MarkGridResourcesDirty();
+
+	UFUNCTION(BlueprintCallable, Category = "Smoke|Grid")
+	void ReinitializeGridResources();
+
 	UFUNCTION(BlueprintCallable, Category = "Smoke|Domain")
 	void UpdateDomainPreview();
 
@@ -71,9 +95,17 @@ protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
 
 private:
 	void LogLifecycleEvent(const TCHAR* EventName) const;
 	void LogDomainTiming(float DeltaTime, double UpdateSeconds) const;
+	void DispatchSyntheticGridPattern();
 	FVector GetDomainExtents() const;
+
+	FSmokeGridDesc CurrentGridDesc;
+	bool bGridResourcesDirty = true;
+	uint64 GridDispatchFrameIndex = 0;
 };

@@ -18,6 +18,7 @@ USmokeSimulationComponent::USmokeSimulationComponent()
 void USmokeSimulationComponent::OnRegister()
 {
 	Super::OnRegister();
+	MarkGridResourcesDirty();
 	LogLifecycleEvent(TEXT("registered"));
 }
 
@@ -47,6 +48,18 @@ void USmokeSimulationComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 
 	UpdateDomainPreview();
 
+	const UWorld* World = GetWorld();
+	const bool bShouldDispatchGrid = bSimulationEnabled && World && (World->IsGameWorld() || DebugMode == ESmokeDebugMode::Timing);
+	if (bShouldDispatchGrid)
+	{
+		if (bGridResourcesDirty)
+		{
+			ReinitializeGridResources();
+		}
+
+		DispatchSyntheticGridPattern();
+	}
+
 	if (DebugMode == ESmokeDebugMode::Timing)
 	{
 		const double UpdateSeconds = FPlatformTime::Seconds() - UpdateStartSeconds;
@@ -62,6 +75,10 @@ void USmokeSimulationComponent::SetSimulationEnabled(bool bEnabled)
 	}
 
 	bSimulationEnabled = bEnabled;
+	if (bSimulationEnabled)
+	{
+		MarkGridResourcesDirty();
+	}
 
 	if (DebugMode == ESmokeDebugMode::Lifecycle)
 	{
@@ -73,12 +90,55 @@ void USmokeSimulationComponent::SetSimulationEnabled(bool bEnabled)
 
 void USmokeSimulationComponent::ResetSimulation()
 {
+	MarkGridResourcesDirty();
+
 	if (DebugMode == ESmokeDebugMode::Lifecycle)
 	{
 		UE_LOG(LogSmokeCharacter, Log, TEXT("Smoke simulation reset requested on %s. Resolution=%s DomainWorldSize=%s"),
 			*GetNameSafe(GetOwner()),
 			*GridResolution.ToString(),
 			*DomainWorldSize.ToString());
+	}
+}
+
+FIntVector USmokeSimulationComponent::GetEffectiveGridResolution() const
+{
+	switch (GridPreset)
+	{
+	case ESmokeGridPreset::Debug32:
+		return FIntVector(32, 32, 48);
+	case ESmokeGridPreset::Debug64:
+		return FIntVector(64, 64, 96);
+	case ESmokeGridPreset::Target96:
+		return FIntVector(96, 96, 160);
+	case ESmokeGridPreset::Custom:
+	default:
+		return FIntVector(
+			FMath::Max(1, GridResolution.X),
+			FMath::Max(1, GridResolution.Y),
+			FMath::Max(1, GridResolution.Z));
+	}
+}
+
+FSmokeGridDesc USmokeSimulationComponent::BuildGridDesc() const
+{
+	return FSmokeGrid::BuildDesc(GetEffectiveGridResolution(), DomainWorldSize, GetDomainOrigin());
+}
+
+void USmokeSimulationComponent::MarkGridResourcesDirty()
+{
+	bGridResourcesDirty = true;
+}
+
+void USmokeSimulationComponent::ReinitializeGridResources()
+{
+	CurrentGridDesc = BuildGridDesc();
+	bGridResourcesDirty = false;
+
+	if (DebugMode == ESmokeDebugMode::Lifecycle || DebugMode == ESmokeDebugMode::Timing)
+	{
+		UE_LOG(LogSmokeCharacter, Log, TEXT("Smoke grid resources initialized. %s Velocity=PF_A16B16G16R16F Density=PF_R16F Pressure=PF_R16F Divergence=PF_R16F SDF=PF_R16F BoundaryVelocity=PF_A16B16G16R16F"),
+			*CurrentGridDesc.ToLogString());
 	}
 }
 
@@ -158,7 +218,44 @@ void USmokeSimulationComponent::LogDomainTiming(float DeltaTime, double UpdateSe
 		*GridResolution.ToString());
 }
 
+void USmokeSimulationComponent::DispatchSyntheticGridPattern()
+{
+	if (!CurrentGridDesc.IsValid())
+	{
+		ReinitializeGridResources();
+	}
+
+	FSmokeGrid::DispatchSyntheticDensityPass(CurrentGridDesc, GridDispatchFrameIndex++);
+
+	if (DebugMode == ESmokeDebugMode::Timing)
+	{
+		const FIntVector GroupCount(
+			FMath::DivideAndRoundUp(CurrentGridDesc.Resolution.X, 8),
+			FMath::DivideAndRoundUp(CurrentGridDesc.Resolution.Y, 8),
+			FMath::DivideAndRoundUp(CurrentGridDesc.Resolution.Z, 8));
+
+		UE_LOG(LogSmokeCharacter, Log, TEXT("Smoke grid synthetic density pass dispatched. Groups=%s Frame=%llu"),
+			*GroupCount.ToString(),
+			static_cast<unsigned long long>(GridDispatchFrameIndex));
+	}
+}
+
 FVector USmokeSimulationComponent::GetDomainExtents() const
 {
 	return DomainWorldSize * 0.5;
 }
+
+#if WITH_EDITOR
+void USmokeSimulationComponent::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+
+	const FName PropertyName = PropertyChangedEvent.Property ? PropertyChangedEvent.Property->GetFName() : NAME_None;
+	if (PropertyName == GET_MEMBER_NAME_CHECKED(USmokeSimulationComponent, GridPreset)
+		|| PropertyName == GET_MEMBER_NAME_CHECKED(USmokeSimulationComponent, GridResolution)
+		|| PropertyName == GET_MEMBER_NAME_CHECKED(USmokeSimulationComponent, DomainWorldSize))
+	{
+		MarkGridResourcesDirty();
+	}
+}
+#endif

@@ -1,0 +1,23 @@
+#include "/Engine/Public/Platform.ush"
+#include "/Plugin/SmokeCharacter/Private/SmokeGridCommon.ush"
+
+int3 GridResolution;
+float PatternSeed;
+RWTexture3D<float> OutDensity;
+
+[numthreads(8, 8, 8)]
+void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	if (!SmokeGrid_IsInside(DispatchThreadId, GridResolution))
+	{
+		return;
+	}
+
+	float3 uvw = SmokeGrid_GetUVW(DispatchThreadId, GridResolution);
+	float3 centered = uvw * 2.0f - 1.0f;
+	float radial = saturate(1.0f - length(centered));
+	float bands = frac((uvw.x + uvw.y * 0.5f + uvw.z * 0.25f) * 8.0f + PatternSeed * 0.01f);
+	float density = radial * step(0.35f, bands);
+
+	OutDensity[DispatchThreadId] = density;
+}
