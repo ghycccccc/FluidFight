@@ -100,6 +100,41 @@ void FSmokeGrid::DispatchSyntheticDensityPass(const FSmokeGridDesc& GridDesc, ui
 		});
 }
 
+int32 FSmokeGrid::GetSliceAxisExtent(const FIntVector& Resolution, int32 SliceAxis)
+{
+	const FIntVector SanitizedResolution = SanitizeResolution(Resolution);
+	switch (FMath::Clamp(SliceAxis, 0, 2))
+	{
+	case 0:
+		return SanitizedResolution.X;
+	case 1:
+		return SanitizedResolution.Y;
+	case 2:
+	default:
+		return SanitizedResolution.Z;
+	}
+}
+
+FIntPoint FSmokeGrid::GetSliceDimensions(const FIntVector& Resolution, int32 SliceAxis)
+{
+	const FIntVector SanitizedResolution = SanitizeResolution(Resolution);
+	switch (FMath::Clamp(SliceAxis, 0, 2))
+	{
+	case 0:
+		return FIntPoint(SanitizedResolution.Y, SanitizedResolution.Z);
+	case 1:
+		return FIntPoint(SanitizedResolution.X, SanitizedResolution.Z);
+	case 2:
+	default:
+		return FIntPoint(SanitizedResolution.X, SanitizedResolution.Y);
+	}
+}
+
+int32 FSmokeGrid::ClampSliceIndex(const FIntVector& Resolution, int32 SliceAxis, int32 SliceIndex)
+{
+	return FMath::Clamp(SliceIndex, 0, GetSliceAxisExtent(Resolution, SliceAxis) - 1);
+}
+
 FIntVector FSmokeGrid::SanitizeResolution(const FIntVector& Resolution)
 {
 	return FIntVector(

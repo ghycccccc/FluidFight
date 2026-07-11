@@ -22,6 +22,9 @@ class SMOKECHARACTER_API FSmokeGrid
 public:
 	static FSmokeGridDesc BuildDesc(const FIntVector& Resolution, const FVector& DomainWorldSize, const FVector& WorldOrigin);
 	static void DispatchSyntheticDensityPass(const FSmokeGridDesc& GridDesc, uint64 FrameIndex);
+	static int32 GetSliceAxisExtent(const FIntVector& Resolution, int32 SliceAxis);
+	static FIntPoint GetSliceDimensions(const FIntVector& Resolution, int32 SliceAxis);
+	static int32 ClampSliceIndex(const FIntVector& Resolution, int32 SliceAxis, int32 SliceIndex);
 
 private:
 	static FIntVector SanitizeResolution(const FIntVector& Resolution);

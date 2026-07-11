@@ -1,0 +1,59 @@
+#include "/Engine/Public/Platform.ush"
+#include "/Plugin/SmokeCharacter/Private/SmokeGridCommon.ush"
+
+int3 GridResolution;
+int2 SliceDimensions;
+int SliceAxis;
+int SliceIndex;
+uint bUseFalseColor;
+float PatternSeed;
+Texture3D<float> DensityTexture;
+RWTexture3D<float> OutDensity;
+RWTexture2D<float4> OutSlice;
+
+float SmokeDebug_GetSyntheticDensity(uint3 Cell)
+{
+	float3 uvw = SmokeGrid_GetUVW(Cell, GridResolution);
+	float3 centered = uvw * 2.0f - 1.0f;
+	float radial = saturate(1.0f - length(centered));
+	float bands = frac((uvw.x + uvw.y * 0.5f + uvw.z * 0.25f) * 8.0f + PatternSeed * 0.01f);
+	return radial * step(0.35f, bands);
+}
+
+float3 SmokeDebug_FalseColor(float Density)
+{
+	float3 low = float3(0.02f, 0.08f, 0.16f);
+	float3 mid = float3(0.0f, 0.75f, 0.95f);
+	float3 high = float3(1.0f, 0.85f, 0.25f);
+	float t = saturate(Density);
+	float3 colorA = lerp(low, mid, saturate(t * 2.0f));
+	float3 colorB = lerp(mid, high, saturate((t - 0.5f) * 2.0f));
+	return t < 0.5f ? colorA : colorB;
+}
+
+[numthreads(8, 8, 8)]
+void GenerateDensityCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	if (!SmokeGrid_IsInside(DispatchThreadId, GridResolution))
+	{
+		return;
+	}
+
+	OutDensity[DispatchThreadId] = SmokeDebug_GetSyntheticDensity(DispatchThreadId);
+}
+
+[numthreads(8, 8, 1)]
+void SliceDensityCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	if (DispatchThreadId.x >= uint(SliceDimensions.x) || DispatchThreadId.y >= uint(SliceDimensions.y))
+	{
+		return;
+	}
+
+	int clampedSliceIndex = clamp(SliceIndex, 0, SmokeGrid_GetSliceAxisExtent(GridResolution, SliceAxis) - 1);
+	int3 cell = SmokeGrid_GetSliceCell(DispatchThreadId.xy, SliceAxis, clampedSliceIndex);
+	float density = DensityTexture.Load(int4(cell, 0));
+	float3 color = bUseFalseColor != 0 ? SmokeDebug_FalseColor(density) : density.xxx;
+
+	OutSlice[DispatchThreadId.xy] = float4(color, 1.0f);
+}

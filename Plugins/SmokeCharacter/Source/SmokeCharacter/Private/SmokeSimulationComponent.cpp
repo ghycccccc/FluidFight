@@ -2,9 +2,15 @@
 
 #include "SmokeSimulationComponent.h"
 
+#include "CanvasItem.h"
+#include "Debug/DebugDrawService.h"
 #include "DrawDebugHelpers.h"
+#include "Engine/Canvas.h"
+#include "Engine/Engine.h"
+#include "Engine/TextureRenderTarget2D.h"
 #include "GameFramework/Actor.h"
 #include "SmokeCharacter.h"
+#include "SmokeDebugRenderer.h"
 
 USmokeSimulationComponent::USmokeSimulationComponent()
 {
@@ -19,12 +25,14 @@ void USmokeSimulationComponent::OnRegister()
 {
 	Super::OnRegister();
 	MarkGridResourcesDirty();
+	RegisterDensitySliceDebugDraw();
 	LogLifecycleEvent(TEXT("registered"));
 }
 
 void USmokeSimulationComponent::OnUnregister()
 {
 	LogLifecycleEvent(TEXT("unregistered"));
+	UnregisterDensitySliceDebugDraw();
 	Super::OnUnregister();
 }
 
@@ -49,7 +57,7 @@ void USmokeSimulationComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	UpdateDomainPreview();
 
 	const UWorld* World = GetWorld();
-	const bool bShouldDispatchGrid = bSimulationEnabled && World && (World->IsGameWorld() || DebugMode == ESmokeDebugMode::Timing);
+	const bool bShouldDispatchGrid = bSimulationEnabled && World && (World->IsGameWorld() || DebugMode == ESmokeDebugMode::Timing || DebugMode == ESmokeDebugMode::DensitySlice);
 	if (bShouldDispatchGrid)
 	{
 		if (bGridResourcesDirty)
@@ -57,7 +65,14 @@ void USmokeSimulationComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 			ReinitializeGridResources();
 		}
 
-		DispatchSyntheticGridPattern();
+		if (DebugMode == ESmokeDebugMode::DensitySlice)
+		{
+			DispatchDensitySliceDebug();
+		}
+		else
+		{
+			DispatchSyntheticGridPattern();
+		}
 	}
 
 	if (DebugMode == ESmokeDebugMode::Timing)
@@ -133,6 +148,7 @@ void USmokeSimulationComponent::MarkGridResourcesDirty()
 void USmokeSimulationComponent::ReinitializeGridResources()
 {
 	CurrentGridDesc = BuildGridDesc();
+	ClampDensitySliceIndex();
 	bGridResourcesDirty = false;
 
 	if (DebugMode == ESmokeDebugMode::Lifecycle || DebugMode == ESmokeDebugMode::Timing)
@@ -240,6 +256,123 @@ void USmokeSimulationComponent::DispatchSyntheticGridPattern()
 	}
 }
 
+void USmokeSimulationComponent::DispatchDensitySliceDebug()
+{
+	if (!CurrentGridDesc.IsValid())
+	{
+		ReinitializeGridResources();
+	}
+
+	ClampDensitySliceIndex();
+	EnsureDensitySliceRenderTarget();
+
+	const uint64 FrameIndex = GridDispatchFrameIndex++;
+	DebugRenderer.DispatchDensitySlice(
+		CurrentGridDesc,
+		FrameIndex,
+		static_cast<int32>(SliceAxis),
+		SliceIndex,
+		bUseDensitySliceFalseColor,
+		DensitySlicePreview);
+
+	if (DebugMode == ESmokeDebugMode::DensitySlice)
+	{
+		const FIntPoint SliceDimensions = FSmokeGrid::GetSliceDimensions(CurrentGridDesc.Resolution, static_cast<int32>(SliceAxis));
+		UE_LOG(LogSmokeCharacter, Verbose, TEXT("Smoke density slice dispatched. Axis=%d Index=%d Size=%s Frame=%llu"),
+			static_cast<int32>(SliceAxis),
+			SliceIndex,
+			*SliceDimensions.ToString(),
+			static_cast<unsigned long long>(FrameIndex));
+	}
+}
+
+void USmokeSimulationComponent::ClampDensitySliceIndex()
+{
+	const FIntVector EffectiveResolution = GetEffectiveGridResolution();
+	SliceIndex = FSmokeGrid::ClampSliceIndex(EffectiveResolution, static_cast<int32>(SliceAxis), SliceIndex);
+}
+
+void USmokeSimulationComponent::EnsureDensitySliceRenderTarget()
+{
+	const FIntPoint SliceDimensions = FSmokeGrid::GetSliceDimensions(GetEffectiveGridResolution(), static_cast<int32>(SliceAxis));
+	const bool bNeedsNewTarget = !DensitySlicePreview
+		|| DensitySlicePreview->SizeX != SliceDimensions.X
+		|| DensitySlicePreview->SizeY != SliceDimensions.Y;
+
+	if (!bNeedsNewTarget)
+	{
+		return;
+	}
+
+	DensitySlicePreview = NewObject<UTextureRenderTarget2D>(this, TEXT("SmokeDensitySlicePreview"), RF_Transient);
+	DensitySlicePreview->RenderTargetFormat = RTF_RGBA16f;
+	DensitySlicePreview->ClearColor = FLinearColor::Black;
+	DensitySlicePreview->bAutoGenerateMips = false;
+	DensitySlicePreview->InitCustomFormat(SliceDimensions.X, SliceDimensions.Y, PF_FloatRGBA, false);
+	DensitySlicePreview->UpdateResourceImmediate(true);
+}
+
+void USmokeSimulationComponent::RegisterDensitySliceDebugDraw()
+{
+	if (DensitySliceDebugDrawHandle.IsValid())
+	{
+		return;
+	}
+
+	DensitySliceDebugDrawHandle = UDebugDrawService::Register(
+		TEXT("Game"),
+		FDebugDrawDelegate::CreateUObject(this, &USmokeSimulationComponent::DrawDensitySliceOverlay));
+}
+
+void USmokeSimulationComponent::UnregisterDensitySliceDebugDraw()
+{
+	if (!DensitySliceDebugDrawHandle.IsValid())
+	{
+		return;
+	}
+
+	UDebugDrawService::Unregister(DensitySliceDebugDrawHandle);
+	DensitySliceDebugDrawHandle.Reset();
+}
+
+void USmokeSimulationComponent::DrawDensitySliceOverlay(UCanvas* Canvas, APlayerController* PlayerController)
+{
+	if (DebugMode != ESmokeDebugMode::DensitySlice || !DensitySlicePreview || !Canvas)
+	{
+		return;
+	}
+
+	FTexture* RenderTargetTexture = DensitySlicePreview->GetResource();
+	if (!RenderTargetTexture)
+	{
+		return;
+	}
+
+	const FIntPoint SliceDimensions = FSmokeGrid::GetSliceDimensions(GetEffectiveGridResolution(), static_cast<int32>(SliceAxis));
+	const float Scale = FMath::Max(1.0f, DensitySliceOverlayScale);
+	const FVector2D DrawPosition(24.0f, 56.0f);
+	const FVector2D DrawSize(
+		static_cast<float>(SliceDimensions.X) * Scale,
+		static_cast<float>(SliceDimensions.Y) * Scale);
+
+	FCanvasTileItem TileItem(DrawPosition, RenderTargetTexture, DrawSize, FLinearColor::White);
+	TileItem.BlendMode = SE_BLEND_Opaque;
+	Canvas->DrawItem(TileItem);
+
+	if (GEngine && GEngine->GetSmallFont())
+	{
+		const FString Label = FString::Printf(
+			TEXT("Smoke Density Slice  Axis=%d  Index=%d  Resolution=%s"),
+			static_cast<int32>(SliceAxis),
+			SliceIndex,
+			*GetEffectiveGridResolution().ToString());
+
+		FCanvasTextItem TextItem(DrawPosition + FVector2D(0.0f, -20.0f), FText::FromString(Label), GEngine->GetSmallFont(), FLinearColor::White);
+		TextItem.EnableShadow(FLinearColor::Black);
+		Canvas->DrawItem(TextItem);
+	}
+}
+
 FVector USmokeSimulationComponent::GetDomainExtents() const
 {
 	return DomainWorldSize * 0.5;
@@ -256,6 +389,19 @@ void USmokeSimulationComponent::PostEditChangeProperty(FPropertyChangedEvent& Pr
 		|| PropertyName == GET_MEMBER_NAME_CHECKED(USmokeSimulationComponent, DomainWorldSize))
 	{
 		MarkGridResourcesDirty();
+	}
+
+	const bool bSliceShapeChanged = PropertyName == GET_MEMBER_NAME_CHECKED(USmokeSimulationComponent, SliceAxis)
+		|| PropertyName == GET_MEMBER_NAME_CHECKED(USmokeSimulationComponent, GridPreset)
+		|| PropertyName == GET_MEMBER_NAME_CHECKED(USmokeSimulationComponent, GridResolution);
+	if (bSliceShapeChanged)
+	{
+		SliceIndex = FSmokeGrid::GetSliceAxisExtent(GetEffectiveGridResolution(), static_cast<int32>(SliceAxis)) / 2;
+		DensitySlicePreview = nullptr;
+	}
+	else if (PropertyName == GET_MEMBER_NAME_CHECKED(USmokeSimulationComponent, SliceIndex))
+	{
+		ClampDensitySliceIndex();
 	}
 }
 #endif

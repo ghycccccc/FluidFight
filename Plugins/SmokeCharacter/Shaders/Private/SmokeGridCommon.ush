@@ -11,4 +11,34 @@ bool SmokeGrid_IsInside(uint3 Cell, int3 GridResolution)
 	return all(Cell < uint3(GridResolution));
 }
 
+int SmokeGrid_GetSliceAxisExtent(int3 GridResolution, int SliceAxis)
+{
+	if (SliceAxis == 0)
+	{
+		return GridResolution.x;
+	}
+
+	if (SliceAxis == 1)
+	{
+		return GridResolution.y;
+	}
+
+	return GridResolution.z;
+}
+
+int3 SmokeGrid_GetSliceCell(uint2 SlicePixel, int SliceAxis, int SliceIndex)
+{
+	if (SliceAxis == 0)
+	{
+		return int3(SliceIndex, SlicePixel.x, SlicePixel.y);
+	}
+
+	if (SliceAxis == 1)
+	{
+		return int3(SlicePixel.x, SliceIndex, SlicePixel.y);
+	}
+
+	return int3(SlicePixel.x, SlicePixel.y, SliceIndex);
+}
+
 #endif
