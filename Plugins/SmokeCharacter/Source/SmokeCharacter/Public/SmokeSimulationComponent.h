@@ -6,6 +6,7 @@
 #include "Components/ActorComponent.h"
 #include "SmokeDebugRenderer.h"
 #include "SmokeGrid.h"
+#include "SmokeSolver.h"
 #include "SmokeSimulationComponent.generated.h"
 
 class UCanvas;
@@ -57,6 +58,12 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Simulation", meta = (ClampMin = "1.0", ForceUnits = "cm"))
 	FVector DomainWorldSize = FVector(120.0, 120.0, 220.0);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Simulation", meta = (ClampMin = "0.0"))
+	float TimeStepScale = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Simulation", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float DensityDissipation = 0.995f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Debug")
 	ESmokeDebugMode DebugMode = ESmokeDebugMode::Lifecycle;
@@ -131,7 +138,7 @@ private:
 	void LogLifecycleEvent(const TCHAR* EventName) const;
 	void LogDomainTiming(float DeltaTime, double UpdateSeconds) const;
 	void DispatchSyntheticGridPattern();
-	void DispatchDensitySliceDebug();
+	void DispatchSmokeSimulation(float DeltaTime);
 	void ClampDensitySliceIndex();
 	void EnsureDensitySliceRenderTarget();
 	void RegisterDensitySliceDebugDraw();
@@ -140,6 +147,7 @@ private:
 	FVector GetDomainExtents() const;
 
 	FSmokeGridDesc CurrentGridDesc;
+	FSmokeSolver Solver;
 	FSmokeDebugRenderer DebugRenderer;
 	FDelegateHandle DensitySliceDebugDrawHandle;
 	bool bGridResourcesDirty = true;

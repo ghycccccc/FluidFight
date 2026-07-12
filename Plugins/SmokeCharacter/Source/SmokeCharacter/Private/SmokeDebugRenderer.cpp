@@ -42,6 +42,62 @@ class FSmokeDebugSliceCS : public FGlobalShader
 IMPLEMENT_GLOBAL_SHADER(FSmokeDebugDensityCS, "/Plugin/SmokeCharacter/Private/SmokeDebugSlice.usf", "GenerateDensityCS", SF_Compute);
 IMPLEMENT_GLOBAL_SHADER(FSmokeDebugSliceCS, "/Plugin/SmokeCharacter/Private/SmokeDebugSlice.usf", "SliceDensityCS", SF_Compute);
 
+void FSmokeDebugRenderer::AddDensitySlicePass(
+	FRDGBuilder& GraphBuilder,
+	const FSmokeGridDesc& GridDesc,
+	FRDGTexture* DensityTexture,
+	int32 SliceAxis,
+	int32 SliceIndex,
+	bool bUseFalseColor,
+	FRHITexture* OutputTextureRHI) const
+{
+	if (!GridDesc.IsValid() || !DensityTexture || !OutputTextureRHI)
+	{
+		return;
+	}
+
+	const int32 ClampedAxis = FMath::Clamp(SliceAxis, 0, 2);
+	const int32 ClampedSliceIndex = FSmokeGrid::ClampSliceIndex(GridDesc.Resolution, ClampedAxis, SliceIndex);
+	const FIntPoint SliceDimensions = FSmokeGrid::GetSliceDimensions(GridDesc.Resolution, ClampedAxis);
+
+	const FRDGTextureDesc SliceDesc = FRDGTextureDesc::Create2D(
+		SliceDimensions,
+		PF_FloatRGBA,
+		FClearValueBinding::Black,
+		TexCreate_ShaderResource | TexCreate_UAV);
+
+	FRDGTextureRef SliceTexture = GraphBuilder.CreateTexture(SliceDesc, TEXT("SmokeCharacter.Debug.DensitySlice"));
+	FRDGTextureUAVRef SliceUAV = GraphBuilder.CreateUAV(SliceTexture);
+
+	FSmokeDebugSliceCS::FParameters* SliceParameters = GraphBuilder.AllocParameters<FSmokeDebugSliceCS::FParameters>();
+	SliceParameters->GridResolution = GridDesc.Resolution;
+	SliceParameters->SliceDimensions = SliceDimensions;
+	SliceParameters->SliceAxis = ClampedAxis;
+	SliceParameters->SliceIndex = ClampedSliceIndex;
+	SliceParameters->bUseFalseColor = bUseFalseColor ? 1u : 0u;
+	SliceParameters->DensityTexture = DensityTexture;
+	SliceParameters->OutSlice = SliceUAV;
+
+	const FIntVector SliceGroupCount(
+		FMath::DivideAndRoundUp(SliceDimensions.X, 8),
+		FMath::DivideAndRoundUp(SliceDimensions.Y, 8),
+		1);
+	const TShaderMapRef<FSmokeDebugSliceCS> SliceShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
+	FComputeShaderUtils::AddPass(
+		GraphBuilder,
+		RDG_EVENT_NAME("SmokeCharacter Density Slice Axis=%d Index=%d", ClampedAxis, ClampedSliceIndex),
+		SliceShader,
+		SliceParameters,
+		SliceGroupCount);
+
+	TRefCountPtr<IPooledRenderTarget> ExternalOutput = CreateRenderTarget(OutputTextureRHI, TEXT("SmokeCharacter.Debug.DensitySliceOutput"));
+	FRDGTextureRef OutputTexture = GraphBuilder.RegisterExternalTexture(ExternalOutput);
+
+	FRHICopyTextureInfo CopyInfo;
+	CopyInfo.Size = FIntVector(SliceDimensions.X, SliceDimensions.Y, 1);
+	AddCopyTexturePass(GraphBuilder, SliceTexture, OutputTexture, CopyInfo);
+}
+
 void FSmokeDebugRenderer::DispatchDensitySlice(
 	const FSmokeGridDesc& GridDesc,
 	uint64 FrameIndex,
@@ -63,10 +119,9 @@ void FSmokeDebugRenderer::DispatchDensitySlice(
 
 	const int32 ClampedAxis = FMath::Clamp(SliceAxis, 0, 2);
 	const int32 ClampedSliceIndex = FSmokeGrid::ClampSliceIndex(GridDesc.Resolution, ClampedAxis, SliceIndex);
-	const FIntPoint SliceDimensions = FSmokeGrid::GetSliceDimensions(GridDesc.Resolution, ClampedAxis);
 
 	ENQUEUE_RENDER_COMMAND(SmokeDebugDensitySlice)(
-		[GridDesc, FrameIndex, ClampedAxis, ClampedSliceIndex, SliceDimensions, bUseFalseColor, OutputResource](FRHICommandListImmediate& RHICmdList)
+		[GridDesc, FrameIndex, ClampedAxis, ClampedSliceIndex, bUseFalseColor, OutputResource](FRHICommandListImmediate& RHICmdList)
 		{
 			FTextureRHIRef OutputTextureRHI = OutputResource->GetRenderTargetTexture();
 			if (!OutputTextureRHI.IsValid())
@@ -99,42 +154,14 @@ void FSmokeDebugRenderer::DispatchDensitySlice(
 				DensityParameters,
 				DensityGroupCount);
 
-			const FRDGTextureDesc SliceDesc = FRDGTextureDesc::Create2D(
-				SliceDimensions,
-				PF_FloatRGBA,
-				FClearValueBinding::Black,
-				TexCreate_ShaderResource | TexCreate_UAV);
-
-			FRDGTextureRef SliceTexture = GraphBuilder.CreateTexture(SliceDesc, TEXT("SmokeCharacter.Debug.DensitySlice"));
-			FRDGTextureUAVRef SliceUAV = GraphBuilder.CreateUAV(SliceTexture);
-
-			FSmokeDebugSliceCS::FParameters* SliceParameters = GraphBuilder.AllocParameters<FSmokeDebugSliceCS::FParameters>();
-			SliceParameters->GridResolution = GridDesc.Resolution;
-			SliceParameters->SliceDimensions = SliceDimensions;
-			SliceParameters->SliceAxis = ClampedAxis;
-			SliceParameters->SliceIndex = ClampedSliceIndex;
-			SliceParameters->bUseFalseColor = bUseFalseColor ? 1u : 0u;
-			SliceParameters->DensityTexture = DensityTexture;
-			SliceParameters->OutSlice = SliceUAV;
-
-			const FIntVector SliceGroupCount(
-				FMath::DivideAndRoundUp(SliceDimensions.X, 8),
-				FMath::DivideAndRoundUp(SliceDimensions.Y, 8),
-				1);
-			const TShaderMapRef<FSmokeDebugSliceCS> SliceShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
-			FComputeShaderUtils::AddPass(
+			FSmokeDebugRenderer().AddDensitySlicePass(
 				GraphBuilder,
-				RDG_EVENT_NAME("SmokeCharacter Density Slice Axis=%d Index=%d", ClampedAxis, ClampedSliceIndex),
-				SliceShader,
-				SliceParameters,
-				SliceGroupCount);
-
-			TRefCountPtr<IPooledRenderTarget> ExternalOutput = CreateRenderTarget(OutputTextureRHI, TEXT("SmokeCharacter.Debug.DensitySliceOutput"));
-			FRDGTextureRef OutputTexture = GraphBuilder.RegisterExternalTexture(ExternalOutput);
-
-			FRHICopyTextureInfo CopyInfo;
-			CopyInfo.Size = FIntVector(SliceDimensions.X, SliceDimensions.Y, 1);
-			AddCopyTexturePass(GraphBuilder, SliceTexture, OutputTexture, CopyInfo);
+				GridDesc,
+				DensityTexture,
+				ClampedAxis,
+				ClampedSliceIndex,
+				bUseFalseColor,
+				OutputTextureRHI);
 
 			GraphBuilder.Execute();
 		});

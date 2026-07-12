@@ -43,6 +43,39 @@ FString FSmokeGridDesc::ToLogString() const
 		*VoxelSize.ToString());
 }
 
+void FSmokeGridResources::Reset()
+{
+	DensityTextures[0].SafeRelease();
+	DensityTextures[1].SafeRelease();
+	ActiveDensityIndex = 0;
+	bInitialized = false;
+	Desc = FSmokeGridDesc();
+}
+
+bool FSmokeGridResources::IsValidFor(const FSmokeGridDesc& GridDesc) const
+{
+	return bInitialized
+		&& DensityTextures[0].IsValid()
+		&& DensityTextures[1].IsValid()
+		&& Desc.Resolution == GridDesc.Resolution
+		&& Desc.DomainWorldSize.Equals(GridDesc.DomainWorldSize);
+}
+
+IPooledRenderTarget* FSmokeGridResources::GetCurrentDensity() const
+{
+	return DensityTextures[ActiveDensityIndex].GetReference();
+}
+
+IPooledRenderTarget* FSmokeGridResources::GetNextDensity() const
+{
+	return DensityTextures[1 - ActiveDensityIndex].GetReference();
+}
+
+void FSmokeGridResources::SwapDensityBuffers()
+{
+	ActiveDensityIndex = 1 - ActiveDensityIndex;
+}
+
 FSmokeGridDesc FSmokeGrid::BuildDesc(const FIntVector& Resolution, const FVector& DomainWorldSize, const FVector& WorldOrigin)
 {
 	FSmokeGridDesc Desc;

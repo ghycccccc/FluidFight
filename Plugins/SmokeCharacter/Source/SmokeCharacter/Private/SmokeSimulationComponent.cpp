@@ -65,14 +65,7 @@ void USmokeSimulationComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 			ReinitializeGridResources();
 		}
 
-		if (DebugMode == ESmokeDebugMode::DensitySlice)
-		{
-			DispatchDensitySliceDebug();
-		}
-		else
-		{
-			DispatchSyntheticGridPattern();
-		}
+		DispatchSmokeSimulation(DeltaTime);
 	}
 
 	if (DebugMode == ESmokeDebugMode::Timing)
@@ -106,6 +99,7 @@ void USmokeSimulationComponent::SetSimulationEnabled(bool bEnabled)
 void USmokeSimulationComponent::ResetSimulation()
 {
 	MarkGridResourcesDirty();
+	Solver.ResetResources();
 
 	if (DebugMode == ESmokeDebugMode::Lifecycle)
 	{
@@ -143,12 +137,14 @@ FSmokeGridDesc USmokeSimulationComponent::BuildGridDesc() const
 void USmokeSimulationComponent::MarkGridResourcesDirty()
 {
 	bGridResourcesDirty = true;
+	Solver.ResetResources();
 }
 
 void USmokeSimulationComponent::ReinitializeGridResources()
 {
 	CurrentGridDesc = BuildGridDesc();
 	ClampDensitySliceIndex();
+	Solver.ResetResources();
 	bGridResourcesDirty = false;
 
 	if (DebugMode == ESmokeDebugMode::Lifecycle || DebugMode == ESmokeDebugMode::Timing)
@@ -256,29 +252,44 @@ void USmokeSimulationComponent::DispatchSyntheticGridPattern()
 	}
 }
 
-void USmokeSimulationComponent::DispatchDensitySliceDebug()
+void USmokeSimulationComponent::DispatchSmokeSimulation(float DeltaTime)
 {
 	if (!CurrentGridDesc.IsValid())
 	{
 		ReinitializeGridResources();
 	}
 
+	CurrentGridDesc = BuildGridDesc();
 	ClampDensitySliceIndex();
-	EnsureDensitySliceRenderTarget();
+	FSmokeDensitySliceRequest SliceRequest;
+	FSmokeDensitySliceRequest* SliceRequestPtr = nullptr;
+	if (DebugMode == ESmokeDebugMode::DensitySlice)
+	{
+		EnsureDensitySliceRenderTarget();
+		SliceRequest.SliceAxis = static_cast<int32>(SliceAxis);
+		SliceRequest.SliceIndex = SliceIndex;
+		SliceRequest.bUseFalseColor = bUseDensitySliceFalseColor;
+		SliceRequest.OutputRenderTarget = DensitySlicePreview;
+		SliceRequest.DebugRenderer = &DebugRenderer;
+		SliceRequestPtr = &SliceRequest;
+	}
 
 	const uint64 FrameIndex = GridDispatchFrameIndex++;
-	DebugRenderer.DispatchDensitySlice(
+	FSmokeSolverSettings SolverSettings;
+	SolverSettings.DeltaTime = DeltaTime;
+	SolverSettings.TimeStepScale = TimeStepScale;
+	SolverSettings.DensityDissipation = DensityDissipation;
+	SolverSettings.bVerboseLogging = DebugMode == ESmokeDebugMode::Timing;
+	Solver.DispatchSimulation(
 		CurrentGridDesc,
+		SolverSettings,
 		FrameIndex,
-		static_cast<int32>(SliceAxis),
-		SliceIndex,
-		bUseDensitySliceFalseColor,
-		DensitySlicePreview);
+		SliceRequestPtr);
 
 	if (DebugMode == ESmokeDebugMode::DensitySlice)
 	{
 		const FIntPoint SliceDimensions = FSmokeGrid::GetSliceDimensions(CurrentGridDesc.Resolution, static_cast<int32>(SliceAxis));
-		UE_LOG(LogSmokeCharacter, Verbose, TEXT("Smoke density slice dispatched. Axis=%d Index=%d Size=%s Frame=%llu"),
+		UE_LOG(LogSmokeCharacter, Verbose, TEXT("Smoke advected density slice dispatched. Axis=%d Index=%d Size=%s Frame=%llu"),
 			static_cast<int32>(SliceAxis),
 			SliceIndex,
 			*SliceDimensions.ToString(),

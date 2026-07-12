@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "PooledRenderTarget.h"
 
 struct FSmokeGridDesc
 {
@@ -15,6 +16,20 @@ struct FSmokeGridDesc
 
 	bool IsValid() const;
 	FString ToLogString() const;
+};
+
+struct SMOKECHARACTER_API FSmokeGridResources
+{
+	FSmokeGridDesc Desc;
+	TRefCountPtr<IPooledRenderTarget> DensityTextures[2];
+	int32 ActiveDensityIndex = 0;
+	bool bInitialized = false;
+
+	void Reset();
+	bool IsValidFor(const FSmokeGridDesc& GridDesc) const;
+	IPooledRenderTarget* GetCurrentDensity() const;
+	IPooledRenderTarget* GetNextDensity() const;
+	void SwapDensityBuffers();
 };
 
 class SMOKECHARACTER_API FSmokeGrid
