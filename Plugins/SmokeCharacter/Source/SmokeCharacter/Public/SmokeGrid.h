@@ -22,14 +22,26 @@ struct SMOKECHARACTER_API FSmokeGridResources
 {
 	FSmokeGridDesc Desc;
 	TRefCountPtr<IPooledRenderTarget> DensityTextures[2];
+	TRefCountPtr<IPooledRenderTarget> VelocityTextures[2];
+	TRefCountPtr<IPooledRenderTarget> PressureTextures[2];
+	TRefCountPtr<IPooledRenderTarget> DivergenceTexture;
 	int32 ActiveDensityIndex = 0;
+	int32 ActiveVelocityIndex = 0;
+	int32 ActivePressureIndex = 0;
 	bool bInitialized = false;
 
 	void Reset();
 	bool IsValidFor(const FSmokeGridDesc& GridDesc) const;
 	IPooledRenderTarget* GetCurrentDensity() const;
 	IPooledRenderTarget* GetNextDensity() const;
+	IPooledRenderTarget* GetCurrentVelocity() const;
+	IPooledRenderTarget* GetNextVelocity() const;
+	IPooledRenderTarget* GetCurrentPressure() const;
+	IPooledRenderTarget* GetNextPressure() const;
+	IPooledRenderTarget* GetDivergence() const;
 	void SwapDensityBuffers();
+	void SwapVelocityBuffers();
+	void SwapPressureBuffers();
 };
 
 class SMOKECHARACTER_API FSmokeGrid

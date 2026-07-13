@@ -47,7 +47,14 @@ void FSmokeGridResources::Reset()
 {
 	DensityTextures[0].SafeRelease();
 	DensityTextures[1].SafeRelease();
+	VelocityTextures[0].SafeRelease();
+	VelocityTextures[1].SafeRelease();
+	PressureTextures[0].SafeRelease();
+	PressureTextures[1].SafeRelease();
+	DivergenceTexture.SafeRelease();
 	ActiveDensityIndex = 0;
+	ActiveVelocityIndex = 0;
+	ActivePressureIndex = 0;
 	bInitialized = false;
 	Desc = FSmokeGridDesc();
 }
@@ -57,6 +64,11 @@ bool FSmokeGridResources::IsValidFor(const FSmokeGridDesc& GridDesc) const
 	return bInitialized
 		&& DensityTextures[0].IsValid()
 		&& DensityTextures[1].IsValid()
+		&& VelocityTextures[0].IsValid()
+		&& VelocityTextures[1].IsValid()
+		&& PressureTextures[0].IsValid()
+		&& PressureTextures[1].IsValid()
+		&& DivergenceTexture.IsValid()
 		&& Desc.Resolution == GridDesc.Resolution
 		&& Desc.DomainWorldSize.Equals(GridDesc.DomainWorldSize);
 }
@@ -71,9 +83,44 @@ IPooledRenderTarget* FSmokeGridResources::GetNextDensity() const
 	return DensityTextures[1 - ActiveDensityIndex].GetReference();
 }
 
+IPooledRenderTarget* FSmokeGridResources::GetCurrentVelocity() const
+{
+	return VelocityTextures[ActiveVelocityIndex].GetReference();
+}
+
+IPooledRenderTarget* FSmokeGridResources::GetNextVelocity() const
+{
+	return VelocityTextures[1 - ActiveVelocityIndex].GetReference();
+}
+
+IPooledRenderTarget* FSmokeGridResources::GetCurrentPressure() const
+{
+	return PressureTextures[ActivePressureIndex].GetReference();
+}
+
+IPooledRenderTarget* FSmokeGridResources::GetNextPressure() const
+{
+	return PressureTextures[1 - ActivePressureIndex].GetReference();
+}
+
+IPooledRenderTarget* FSmokeGridResources::GetDivergence() const
+{
+	return DivergenceTexture.GetReference();
+}
+
 void FSmokeGridResources::SwapDensityBuffers()
 {
 	ActiveDensityIndex = 1 - ActiveDensityIndex;
+}
+
+void FSmokeGridResources::SwapVelocityBuffers()
+{
+	ActiveVelocityIndex = 1 - ActiveVelocityIndex;
+}
+
+void FSmokeGridResources::SwapPressureBuffers()
+{
+	ActivePressureIndex = 1 - ActivePressureIndex;
 }
 
 FSmokeGridDesc FSmokeGrid::BuildDesc(const FIntVector& Resolution, const FVector& DomainWorldSize, const FVector& WorldOrigin)

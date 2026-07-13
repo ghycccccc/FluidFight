@@ -1,0 +1,177 @@
+#include "/Engine/Public/Platform.ush"
+#include "/Plugin/SmokeCharacter/Private/SmokeGridCommon.ush"
+
+int3 GridResolution;
+float DeltaTime;
+float TimeStepScale;
+float VelocityDissipation;
+float PatternSeed;
+float ClearValue;
+Texture3D<float4> SourceVelocity;
+Texture3D<float> SourcePressure;
+Texture3D<float> DivergenceTexture;
+RWTexture3D<float4> OutVelocity;
+RWTexture3D<float> OutScalar;
+
+int3 SmokeSolve_ClampCell(int3 Cell)
+{
+	return clamp(Cell, int3(0, 0, 0), GridResolution - int3(1, 1, 1));
+}
+
+float SmokeSolve_LoadPressure(int3 Cell)
+{
+	return SourcePressure.Load(int4(SmokeSolve_ClampCell(Cell), 0));
+}
+
+float3 SmokeSolve_LoadVelocity(int3 Cell)
+{
+	return SourceVelocity.Load(int4(SmokeSolve_ClampCell(Cell), 0)).xyz;
+}
+
+float3 SmokeSolve_SampleNearestVelocity(float3 UVW)
+{
+	float3 clampedUVW = saturate(UVW);
+	int3 cell = clamp(int3(floor(clampedUVW * float3(GridResolution))), int3(0, 0, 0), GridResolution - int3(1, 1, 1));
+	return SourceVelocity.Load(int4(cell, 0)).xyz;
+}
+
+float3 SmokeSolve_SampleTrilinearVelocity(float3 UVW)
+{
+	float3 clampedUVW = saturate(UVW) * float3(GridResolution) - 0.5f;
+	int3 baseCell = clamp(int3(floor(clampedUVW)), int3(0, 0, 0), GridResolution - int3(1, 1, 1));
+	int3 nextCell = min(baseCell + int3(1, 1, 1), GridResolution - int3(1, 1, 1));
+	float3 fracUVW = saturate(clampedUVW - float3(baseCell));
+
+	float3 c000 = SourceVelocity.Load(int4(baseCell, 0)).xyz;
+	float3 c100 = SourceVelocity.Load(int4(int3(nextCell.x, baseCell.y, baseCell.z), 0)).xyz;
+	float3 c010 = SourceVelocity.Load(int4(int3(baseCell.x, nextCell.y, baseCell.z), 0)).xyz;
+	float3 c110 = SourceVelocity.Load(int4(int3(nextCell.x, nextCell.y, baseCell.z), 0)).xyz;
+	float3 c001 = SourceVelocity.Load(int4(int3(baseCell.x, baseCell.y, nextCell.z), 0)).xyz;
+	float3 c101 = SourceVelocity.Load(int4(int3(nextCell.x, baseCell.y, nextCell.z), 0)).xyz;
+	float3 c011 = SourceVelocity.Load(int4(int3(baseCell.x, nextCell.y, nextCell.z), 0)).xyz;
+	float3 c111 = SourceVelocity.Load(int4(nextCell, 0)).xyz;
+
+	float3 c00 = lerp(c000, c100, fracUVW.x);
+	float3 c10 = lerp(c010, c110, fracUVW.x);
+	float3 c01 = lerp(c001, c101, fracUVW.x);
+	float3 c11 = lerp(c011, c111, fracUVW.x);
+	float3 c0 = lerp(c00, c10, fracUVW.y);
+	float3 c1 = lerp(c01, c11, fracUVW.y);
+	return lerp(c0, c1, fracUVW.z);
+}
+
+float3 SmokeSolve_GetDebugVelocity(float3 UVW, float Time)
+{
+	float3 centered = UVW - 0.5f;
+	float radius = max(length(centered.xy), 0.001f);
+	float swirlFalloff = saturate(1.0f - radius * 1.8f);
+	float verticalWave = sin((UVW.x + UVW.y + Time * 0.18f) * 18.8496f) * 0.035f;
+	float3 swirl = float3(-centered.y, centered.x, verticalWave);
+	return swirl * swirlFalloff * 1.0f;
+}
+
+[numthreads(8, 8, 8)]
+void InitializeVelocityCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	if (!SmokeGrid_IsInside(DispatchThreadId, GridResolution))
+	{
+		return;
+	}
+
+	float3 uvw = SmokeGrid_GetUVW(DispatchThreadId, GridResolution);
+	OutVelocity[DispatchThreadId] = float4(SmokeSolve_GetDebugVelocity(uvw, PatternSeed), 0.0f);
+}
+
+[numthreads(8, 8, 8)]
+void ClearScalarCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	if (!SmokeGrid_IsInside(DispatchThreadId, GridResolution))
+	{
+		return;
+	}
+
+	OutScalar[DispatchThreadId] = ClearValue;
+}
+
+[numthreads(8, 8, 8)]
+void AdvectVelocityCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	if (!SmokeGrid_IsInside(DispatchThreadId, GridResolution))
+	{
+		return;
+	}
+
+	float3 uvw = SmokeGrid_GetUVW(DispatchThreadId, GridResolution);
+	float scaledDeltaTime = max(DeltaTime, 0.0f) * max(TimeStepScale, 0.0f);
+	float3 velocity = SmokeSolve_SampleNearestVelocity(uvw);
+	float3 advected = SmokeSolve_SampleTrilinearVelocity(uvw - velocity * scaledDeltaTime);
+
+	OutVelocity[DispatchThreadId] = float4(advected * saturate(VelocityDissipation), 0.0f);
+}
+
+[numthreads(8, 8, 8)]
+void ComputeDivergenceCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	if (!SmokeGrid_IsInside(DispatchThreadId, GridResolution))
+	{
+		return;
+	}
+
+	int3 cell = int3(DispatchThreadId);
+	float3 left = SmokeSolve_LoadVelocity(cell + int3(-1, 0, 0));
+	float3 right = SmokeSolve_LoadVelocity(cell + int3(1, 0, 0));
+	float3 down = SmokeSolve_LoadVelocity(cell + int3(0, -1, 0));
+	float3 up = SmokeSolve_LoadVelocity(cell + int3(0, 1, 0));
+	float3 back = SmokeSolve_LoadVelocity(cell + int3(0, 0, -1));
+	float3 front = SmokeSolve_LoadVelocity(cell + int3(0, 0, 1));
+	float divergence = -0.5f * (
+		(right.x - left.x) +
+		(up.y - down.y) +
+		(front.z - back.z));
+
+	OutScalar[DispatchThreadId] = divergence;
+}
+
+[numthreads(8, 8, 8)]
+void JacobiPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	if (!SmokeGrid_IsInside(DispatchThreadId, GridResolution))
+	{
+		return;
+	}
+
+	int3 cell = int3(DispatchThreadId);
+	float pLeft = SmokeSolve_LoadPressure(cell + int3(-1, 0, 0));
+	float pRight = SmokeSolve_LoadPressure(cell + int3(1, 0, 0));
+	float pDown = SmokeSolve_LoadPressure(cell + int3(0, -1, 0));
+	float pUp = SmokeSolve_LoadPressure(cell + int3(0, 1, 0));
+	float pBack = SmokeSolve_LoadPressure(cell + int3(0, 0, -1));
+	float pFront = SmokeSolve_LoadPressure(cell + int3(0, 0, 1));
+	float divergence = DivergenceTexture.Load(int4(cell, 0));
+
+	OutScalar[DispatchThreadId] = (pLeft + pRight + pDown + pUp + pBack + pFront + divergence) / 6.0f;
+}
+
+[numthreads(8, 8, 8)]
+void ProjectVelocityCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	if (!SmokeGrid_IsInside(DispatchThreadId, GridResolution))
+	{
+		return;
+	}
+
+	int3 cell = int3(DispatchThreadId);
+	float pLeft = SmokeSolve_LoadPressure(cell + int3(-1, 0, 0));
+	float pRight = SmokeSolve_LoadPressure(cell + int3(1, 0, 0));
+	float pDown = SmokeSolve_LoadPressure(cell + int3(0, -1, 0));
+	float pUp = SmokeSolve_LoadPressure(cell + int3(0, 1, 0));
+	float pBack = SmokeSolve_LoadPressure(cell + int3(0, 0, -1));
+	float pFront = SmokeSolve_LoadPressure(cell + int3(0, 0, 1));
+	float3 gradient = 0.5f * float3(
+		pRight - pLeft,
+		pUp - pDown,
+		pFront - pBack);
+	float3 velocity = SourceVelocity.Load(int4(cell, 0)).xyz - gradient;
+
+	OutVelocity[DispatchThreadId] = float4(velocity, 0.0f);
+}

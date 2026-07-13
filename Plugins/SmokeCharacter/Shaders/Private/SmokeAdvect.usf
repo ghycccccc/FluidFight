@@ -7,6 +7,7 @@ float TimeStepScale;
 float DensityDissipation;
 float PatternSeed;
 Texture3D<float> SourceDensity;
+Texture3D<float4> SourceVelocity;
 RWTexture3D<float> OutDensity;
 
 float SmokeAdvect_GetSyntheticDensity(uint3 Cell)
@@ -24,8 +25,10 @@ float3 SmokeAdvect_GetDebugVelocity(float3 UVW, float Time)
 	float radius = max(length(centered.xy), 0.001f);
 	float swirlFalloff = saturate(1.0f - radius * 1.8f);
 	float verticalWave = sin((UVW.x + UVW.y + Time * 0.18f) * 18.8496f) * 0.035f;
+	float compress = sin((UVW.z + Time * 0.12f) * 12.56637f) * 0.08f;
 	float3 swirl = float3(-centered.y, centered.x, verticalWave);
-	return swirl * swirlFalloff * 1.0f;
+	float3 sink = centered * (-0.08f + compress);
+	return (swirl + sink) * swirlFalloff * 1.0f;
 }
 
 float SmokeAdvect_SampleNearestDensity(float3 UVW)
@@ -33,6 +36,63 @@ float SmokeAdvect_SampleNearestDensity(float3 UVW)
 	float3 clampedUVW = saturate(UVW);
 	int3 cell = clamp(int3(floor(clampedUVW * float3(GridResolution))), int3(0, 0, 0), GridResolution - int3(1, 1, 1));
 	return SourceDensity.Load(int4(cell, 0));
+}
+
+float3 SmokeAdvect_SampleNearestVelocity(float3 UVW)
+{
+	float3 clampedUVW = saturate(UVW);
+	int3 cell = clamp(int3(floor(clampedUVW * float3(GridResolution))), int3(0, 0, 0), GridResolution - int3(1, 1, 1));
+	return SourceVelocity.Load(int4(cell, 0)).xyz;
+}
+
+float SmokeAdvect_SampleTrilinearDensity(float3 UVW)
+{
+	float3 clampedUVW = saturate(UVW) * float3(GridResolution) - 0.5f;
+	int3 baseCell = clamp(int3(floor(clampedUVW)), int3(0, 0, 0), GridResolution - int3(1, 1, 1));
+	int3 nextCell = min(baseCell + int3(1, 1, 1), GridResolution - int3(1, 1, 1));
+	float3 fracUVW = saturate(clampedUVW - float3(baseCell));
+
+	float c000 = SourceDensity.Load(int4(baseCell, 0));
+	float c100 = SourceDensity.Load(int4(int3(nextCell.x, baseCell.y, baseCell.z), 0));
+	float c010 = SourceDensity.Load(int4(int3(baseCell.x, nextCell.y, baseCell.z), 0));
+	float c110 = SourceDensity.Load(int4(int3(nextCell.x, nextCell.y, baseCell.z), 0));
+	float c001 = SourceDensity.Load(int4(int3(baseCell.x, baseCell.y, nextCell.z), 0));
+	float c101 = SourceDensity.Load(int4(int3(nextCell.x, baseCell.y, nextCell.z), 0));
+	float c011 = SourceDensity.Load(int4(int3(baseCell.x, nextCell.y, nextCell.z), 0));
+	float c111 = SourceDensity.Load(int4(nextCell, 0));
+
+	float c00 = lerp(c000, c100, fracUVW.x);
+	float c10 = lerp(c010, c110, fracUVW.x);
+	float c01 = lerp(c001, c101, fracUVW.x);
+	float c11 = lerp(c011, c111, fracUVW.x);
+	float c0 = lerp(c00, c10, fracUVW.y);
+	float c1 = lerp(c01, c11, fracUVW.y);
+	return lerp(c0, c1, fracUVW.z);
+}
+
+float3 SmokeAdvect_SampleTrilinearVelocity(float3 UVW)
+{
+	float3 clampedUVW = saturate(UVW) * float3(GridResolution) - 0.5f;
+	int3 baseCell = clamp(int3(floor(clampedUVW)), int3(0, 0, 0), GridResolution - int3(1, 1, 1));
+	int3 nextCell = min(baseCell + int3(1, 1, 1), GridResolution - int3(1, 1, 1));
+	float3 fracUVW = saturate(clampedUVW - float3(baseCell));
+
+	float3 c000 = SourceVelocity.Load(int4(baseCell, 0)).xyz;
+	float3 c100 = SourceVelocity.Load(int4(int3(nextCell.x, baseCell.y, baseCell.z), 0)).xyz;
+	float3 c010 = SourceVelocity.Load(int4(int3(baseCell.x, nextCell.y, baseCell.z), 0)).xyz;
+	float3 c110 = SourceVelocity.Load(int4(int3(nextCell.x, nextCell.y, baseCell.z), 0)).xyz;
+	float3 c001 = SourceVelocity.Load(int4(int3(baseCell.x, baseCell.y, nextCell.z), 0)).xyz;
+	float3 c101 = SourceVelocity.Load(int4(int3(nextCell.x, baseCell.y, nextCell.z), 0)).xyz;
+	float3 c011 = SourceVelocity.Load(int4(int3(baseCell.x, nextCell.y, nextCell.z), 0)).xyz;
+	float3 c111 = SourceVelocity.Load(int4(nextCell, 0)).xyz;
+
+	float3 c00 = lerp(c000, c100, fracUVW.x);
+	float3 c10 = lerp(c010, c110, fracUVW.x);
+	float3 c01 = lerp(c001, c101, fracUVW.x);
+	float3 c11 = lerp(c011, c111, fracUVW.x);
+	float3 c0 = lerp(c00, c10, fracUVW.y);
+	float3 c1 = lerp(c01, c11, fracUVW.y);
+	return lerp(c0, c1, fracUVW.z);
 }
 
 [numthreads(8, 8, 8)]
@@ -56,8 +116,8 @@ void AdvectDensityCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 	float3 uvw = SmokeGrid_GetUVW(DispatchThreadId, GridResolution);
 	float scaledDeltaTime = max(DeltaTime, 0.0f) * max(TimeStepScale, 0.0f);
-	float3 velocity = SmokeAdvect_GetDebugVelocity(uvw, PatternSeed);
-	float density = SmokeAdvect_SampleNearestDensity(uvw - velocity * scaledDeltaTime);
+	float3 velocity = SmokeAdvect_SampleNearestVelocity(uvw);
+	float density = SmokeAdvect_SampleTrilinearDensity(uvw - velocity * scaledDeltaTime);
 
 	OutDensity[DispatchThreadId] = density * saturate(DensityDissipation);
 }

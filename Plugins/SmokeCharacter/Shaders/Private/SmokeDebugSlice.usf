@@ -5,9 +5,12 @@ int3 GridResolution;
 int2 SliceDimensions;
 int SliceAxis;
 int SliceIndex;
+int FieldMode;
 uint bUseFalseColor;
+float FieldScale;
 float PatternSeed;
-Texture3D<float> DensityTexture;
+Texture3D<float> FieldTexture;
+Texture3D<float4> VelocityTexture;
 RWTexture3D<float> OutDensity;
 RWTexture2D<float4> OutSlice;
 
@@ -31,6 +34,31 @@ float3 SmokeDebug_FalseColor(float Density)
 	return t < 0.5f ? colorA : colorB;
 }
 
+float3 SmokeDebug_SignedColor(float Value)
+{
+	float scaled = clamp(Value * FieldScale, -1.0f, 1.0f);
+	float magnitude = abs(scaled);
+	float3 negative = float3(0.1f, 0.35f, 1.0f);
+	float3 neutral = float3(0.02f, 0.02f, 0.02f);
+	float3 positive = float3(1.0f, 0.2f, 0.05f);
+	return scaled < 0.0f ? lerp(neutral, negative, magnitude) : lerp(neutral, positive, magnitude);
+}
+
+float3 SmokeDebug_MapScalar(float Value)
+{
+	if (FieldMode == 0)
+	{
+		return bUseFalseColor != 0 ? SmokeDebug_FalseColor(Value) : Value.xxx;
+	}
+
+	if (bUseFalseColor != 0)
+	{
+		return SmokeDebug_SignedColor(Value);
+	}
+
+	return saturate(0.5f + Value * FieldScale * 0.5f).xxx;
+}
+
 [numthreads(8, 8, 8)]
 void GenerateDensityCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 {
@@ -43,7 +71,7 @@ void GenerateDensityCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 }
 
 [numthreads(8, 8, 1)]
-void SliceDensityCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+void SliceScalarFieldCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 {
 	if (DispatchThreadId.x >= uint(SliceDimensions.x) || DispatchThreadId.y >= uint(SliceDimensions.y))
 	{
@@ -52,8 +80,24 @@ void SliceDensityCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 	int clampedSliceIndex = clamp(SliceIndex, 0, SmokeGrid_GetSliceAxisExtent(GridResolution, SliceAxis) - 1);
 	int3 cell = SmokeGrid_GetSliceCell(DispatchThreadId.xy, SliceAxis, clampedSliceIndex);
-	float density = DensityTexture.Load(int4(cell, 0));
-	float3 color = bUseFalseColor != 0 ? SmokeDebug_FalseColor(density) : density.xxx;
+	float value = FieldTexture.Load(int4(cell, 0));
+	float3 color = SmokeDebug_MapScalar(value);
+
+	OutSlice[DispatchThreadId.xy] = float4(color, 1.0f);
+}
+
+[numthreads(8, 8, 1)]
+void SliceVelocityMagnitudeCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	if (DispatchThreadId.x >= uint(SliceDimensions.x) || DispatchThreadId.y >= uint(SliceDimensions.y))
+	{
+		return;
+	}
+
+	int clampedSliceIndex = clamp(SliceIndex, 0, SmokeGrid_GetSliceAxisExtent(GridResolution, SliceAxis) - 1);
+	int3 cell = SmokeGrid_GetSliceCell(DispatchThreadId.xy, SliceAxis, clampedSliceIndex);
+	float magnitude = length(VelocityTexture.Load(int4(cell, 0)).xyz) * FieldScale;
+	float3 color = bUseFalseColor != 0 ? SmokeDebug_FalseColor(magnitude) : saturate(magnitude).xxx;
 
 	OutSlice[DispatchThreadId.xy] = float4(color, 1.0f);
 }

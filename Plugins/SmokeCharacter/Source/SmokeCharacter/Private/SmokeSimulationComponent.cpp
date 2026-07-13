@@ -57,7 +57,7 @@ void USmokeSimulationComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	UpdateDomainPreview();
 
 	const UWorld* World = GetWorld();
-	const bool bShouldDispatchGrid = bSimulationEnabled && World && (World->IsGameWorld() || DebugMode == ESmokeDebugMode::Timing || DebugMode == ESmokeDebugMode::DensitySlice);
+	const bool bShouldDispatchGrid = bSimulationEnabled && World && (World->IsGameWorld() || DebugMode == ESmokeDebugMode::Timing || IsFieldSliceDebugMode());
 	if (bShouldDispatchGrid)
 	{
 		if (bGridResourcesDirty)
@@ -263,9 +263,10 @@ void USmokeSimulationComponent::DispatchSmokeSimulation(float DeltaTime)
 	ClampDensitySliceIndex();
 	FSmokeDensitySliceRequest SliceRequest;
 	FSmokeDensitySliceRequest* SliceRequestPtr = nullptr;
-	if (DebugMode == ESmokeDebugMode::DensitySlice)
+	if (IsFieldSliceDebugMode())
 	{
 		EnsureDensitySliceRenderTarget();
+		SliceRequest.Field = GetDebugField();
 		SliceRequest.SliceAxis = static_cast<int32>(SliceAxis);
 		SliceRequest.SliceIndex = SliceIndex;
 		SliceRequest.bUseFalseColor = bUseDensitySliceFalseColor;
@@ -279,6 +280,8 @@ void USmokeSimulationComponent::DispatchSmokeSimulation(float DeltaTime)
 	SolverSettings.DeltaTime = DeltaTime;
 	SolverSettings.TimeStepScale = TimeStepScale;
 	SolverSettings.DensityDissipation = DensityDissipation;
+	SolverSettings.VelocityDissipation = VelocityDissipation;
+	SolverSettings.PressureIterations = PressureIterations;
 	SolverSettings.bVerboseLogging = DebugMode == ESmokeDebugMode::Timing;
 	Solver.DispatchSimulation(
 		CurrentGridDesc,
@@ -286,10 +289,11 @@ void USmokeSimulationComponent::DispatchSmokeSimulation(float DeltaTime)
 		FrameIndex,
 		SliceRequestPtr);
 
-	if (DebugMode == ESmokeDebugMode::DensitySlice)
+	if (IsFieldSliceDebugMode())
 	{
 		const FIntPoint SliceDimensions = FSmokeGrid::GetSliceDimensions(CurrentGridDesc.Resolution, static_cast<int32>(SliceAxis));
-		UE_LOG(LogSmokeCharacter, Verbose, TEXT("Smoke advected density slice dispatched. Axis=%d Index=%d Size=%s Frame=%llu"),
+		UE_LOG(LogSmokeCharacter, Verbose, TEXT("Smoke field slice dispatched. Field=%d Axis=%d Index=%d Size=%s Frame=%llu"),
+			static_cast<int32>(GetDebugField()),
 			static_cast<int32>(SliceAxis),
 			SliceIndex,
 			*SliceDimensions.ToString(),
@@ -301,6 +305,30 @@ void USmokeSimulationComponent::ClampDensitySliceIndex()
 {
 	const FIntVector EffectiveResolution = GetEffectiveGridResolution();
 	SliceIndex = FSmokeGrid::ClampSliceIndex(EffectiveResolution, static_cast<int32>(SliceAxis), SliceIndex);
+}
+
+bool USmokeSimulationComponent::IsFieldSliceDebugMode() const
+{
+	return DebugMode == ESmokeDebugMode::DensitySlice
+		|| DebugMode == ESmokeDebugMode::VelocityMagnitude
+		|| DebugMode == ESmokeDebugMode::Pressure
+		|| DebugMode == ESmokeDebugMode::Divergence;
+}
+
+ESmokeDebugField USmokeSimulationComponent::GetDebugField() const
+{
+	switch (DebugMode)
+	{
+	case ESmokeDebugMode::VelocityMagnitude:
+		return ESmokeDebugField::VelocityMagnitude;
+	case ESmokeDebugMode::Pressure:
+		return ESmokeDebugField::Pressure;
+	case ESmokeDebugMode::Divergence:
+		return ESmokeDebugField::Divergence;
+	case ESmokeDebugMode::DensitySlice:
+	default:
+		return ESmokeDebugField::Density;
+	}
 }
 
 void USmokeSimulationComponent::EnsureDensitySliceRenderTarget()
@@ -348,7 +376,7 @@ void USmokeSimulationComponent::UnregisterDensitySliceDebugDraw()
 
 void USmokeSimulationComponent::DrawDensitySliceOverlay(UCanvas* Canvas, APlayerController* PlayerController)
 {
-	if (DebugMode != ESmokeDebugMode::DensitySlice || !DensitySlicePreview || !Canvas)
+	if (!IsFieldSliceDebugMode() || !DensitySlicePreview || !Canvas)
 	{
 		return;
 	}
@@ -372,8 +400,26 @@ void USmokeSimulationComponent::DrawDensitySliceOverlay(UCanvas* Canvas, APlayer
 
 	if (GEngine && GEngine->GetSmallFont())
 	{
+		const TCHAR* FieldName = TEXT("Density");
+		switch (GetDebugField())
+		{
+		case ESmokeDebugField::VelocityMagnitude:
+			FieldName = TEXT("Velocity Magnitude");
+			break;
+		case ESmokeDebugField::Pressure:
+			FieldName = TEXT("Pressure");
+			break;
+		case ESmokeDebugField::Divergence:
+			FieldName = TEXT("Divergence");
+			break;
+		case ESmokeDebugField::Density:
+		default:
+			break;
+		}
+
 		const FString Label = FString::Printf(
-			TEXT("Smoke Density Slice  Axis=%d  Index=%d  Resolution=%s"),
+			TEXT("Smoke %s Slice  Axis=%d  Index=%d  Resolution=%s"),
+			FieldName,
 			static_cast<int32>(SliceAxis),
 			SliceIndex,
 			*GetEffectiveGridResolution().ToString());

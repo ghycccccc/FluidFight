@@ -19,7 +19,10 @@ enum class ESmokeDebugMode : uint8
 	Lifecycle UMETA(DisplayName = "Lifecycle"),
 	DomainBounds UMETA(DisplayName = "Domain Bounds"),
 	Timing UMETA(DisplayName = "Timing"),
-	DensitySlice UMETA(DisplayName = "Density Slice")
+	DensitySlice UMETA(DisplayName = "Density Slice"),
+	VelocityMagnitude UMETA(DisplayName = "Velocity Magnitude"),
+	Pressure UMETA(DisplayName = "Pressure"),
+	Divergence UMETA(DisplayName = "Divergence")
 };
 
 UENUM(BlueprintType)
@@ -65,6 +68,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Simulation", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float DensityDissipation = 0.995f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Simulation", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float VelocityDissipation = 0.995f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Simulation", meta = (ClampMin = "0", ClampMax = "80"))
+	int32 PressureIterations = 20;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Debug")
 	ESmokeDebugMode DebugMode = ESmokeDebugMode::Lifecycle;
 
@@ -80,19 +89,19 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Debug", meta = (ClampMin = "0.0", ForceUnits = "s"))
 	float DomainPreviewDuration = 0.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Debug|Density Slice")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Debug|Field Slice")
 	ESmokeSliceAxis SliceAxis = ESmokeSliceAxis::Z;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Debug|Density Slice", meta = (ClampMin = "0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Debug|Field Slice", meta = (ClampMin = "0"))
 	int32 SliceIndex = 80;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Debug|Density Slice")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Debug|Field Slice")
 	bool bUseDensitySliceFalseColor = false;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Debug|Density Slice", meta = (ClampMin = "1.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Debug|Field Slice", meta = (ClampMin = "1.0"))
 	float DensitySliceOverlayScale = 3.0f;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Smoke|Debug|Density Slice")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Smoke|Debug|Field Slice")
 	TObjectPtr<UTextureRenderTarget2D> DensitySlicePreview = nullptr;
 
 	UFUNCTION(BlueprintCallable, Category = "Smoke")
@@ -140,6 +149,8 @@ private:
 	void DispatchSyntheticGridPattern();
 	void DispatchSmokeSimulation(float DeltaTime);
 	void ClampDensitySliceIndex();
+	bool IsFieldSliceDebugMode() const;
+	ESmokeDebugField GetDebugField() const;
 	void EnsureDensitySliceRenderTarget();
 	void RegisterDensitySliceDebugDraw();
 	void UnregisterDensitySliceDebugDraw();
