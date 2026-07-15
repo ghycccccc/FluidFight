@@ -9,6 +9,7 @@
 #include "ShaderParameterStruct.h"
 #include "SmokeCharacter.h"
 #include "SmokeDebugRenderer.h"
+#include "SmokeRenderer.h"
 #include "Engine/TextureRenderTarget2D.h"
 
 class FSmokeInitializeDensityCS : public FGlobalShader
@@ -347,7 +348,8 @@ void FSmokeSolver::DispatchSimulation(
 	const FSmokeGridDesc& GridDesc,
 	const FSmokeSolverSettings& Settings,
 	uint64 FrameIndex,
-	const FSmokeDensitySliceRequest* SliceRequest)
+	const FSmokeDensitySliceRequest* SliceRequest,
+	const FSmokeVolumeRenderRequest* VolumeRenderRequest)
 {
 	if (!GridDesc.IsValid())
 	{
@@ -366,9 +368,16 @@ void FSmokeSolver::DispatchSimulation(
 	FTextureRenderTargetResource* SliceOutputResource = bRenderSlice
 		? SliceRequest->OutputRenderTarget->GameThread_GetRenderTargetResource()
 		: nullptr;
+	const FSmokeVolumeRenderRequest VolumeRenderRequestCopy = VolumeRenderRequest ? *VolumeRenderRequest : FSmokeVolumeRenderRequest();
+	const bool bRenderVolume = VolumeRenderRequest
+		&& VolumeRenderRequest->Renderer
+		&& VolumeRenderRequest->OutputRenderTarget;
+	FTextureRenderTargetResource* VolumeOutputResource = bRenderVolume
+		? VolumeRenderRequest->OutputRenderTarget->GameThread_GetRenderTargetResource()
+		: nullptr;
 
 	ENQUEUE_RENDER_COMMAND(SmokeSolverDensityAdvection)(
-		[Resources, GridDesc, SolverSettings, FrameIndex, SliceRequestCopy, bRenderSlice, SliceOutputResource, bResetRequested](FRHICommandListImmediate& RHICmdList)
+		[Resources, GridDesc, SolverSettings, FrameIndex, SliceRequestCopy, bRenderSlice, SliceOutputResource, VolumeRenderRequestCopy, bRenderVolume, VolumeOutputResource, bResetRequested](FRHICommandListImmediate& RHICmdList)
 		{
 			if (bResetRequested)
 			{
@@ -483,6 +492,20 @@ void FSmokeSolver::DispatchSimulation(
 							SliceRequestCopy.bUseFalseColor,
 							SliceOutputRHI);
 					}
+				}
+			}
+
+			if (bRenderVolume && VolumeOutputResource && VolumeRenderRequestCopy.Renderer)
+			{
+				FTextureRHIRef VolumeOutputRHI = VolumeOutputResource->GetRenderTargetTexture();
+				if (VolumeOutputRHI.IsValid())
+				{
+					VolumeRenderRequestCopy.Renderer->AddVolumeRenderPass(
+						GraphBuilder,
+						GridDesc,
+						NextDensity,
+						VolumeRenderRequestCopy.RenderSettings,
+						VolumeOutputRHI);
 				}
 			}
 

@@ -9,6 +9,9 @@
 #include "Engine/Engine.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "GameFramework/Actor.h"
+#include "GameFramework/PlayerController.h"
+#include "Camera/CameraTypes.h"
+#include "Camera/PlayerCameraManager.h"
 #include "SmokeCharacter.h"
 #include "SmokeDebugRenderer.h"
 
@@ -57,7 +60,7 @@ void USmokeSimulationComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	UpdateDomainPreview();
 
 	const UWorld* World = GetWorld();
-	const bool bShouldDispatchGrid = bSimulationEnabled && World && (World->IsGameWorld() || DebugMode == ESmokeDebugMode::Timing || IsFieldSliceDebugMode());
+	const bool bShouldDispatchGrid = bSimulationEnabled && World && (World->IsGameWorld() || DebugMode == ESmokeDebugMode::Timing || IsFieldSliceDebugMode() || IsVolumeRenderDebugMode());
 	if (bShouldDispatchGrid)
 	{
 		if (bGridResourcesDirty)
@@ -263,6 +266,8 @@ void USmokeSimulationComponent::DispatchSmokeSimulation(float DeltaTime)
 	ClampDensitySliceIndex();
 	FSmokeDensitySliceRequest SliceRequest;
 	FSmokeDensitySliceRequest* SliceRequestPtr = nullptr;
+	FSmokeVolumeRenderRequest VolumeRenderRequest;
+	FSmokeVolumeRenderRequest* VolumeRenderRequestPtr = nullptr;
 	if (IsFieldSliceDebugMode())
 	{
 		EnsureDensitySliceRenderTarget();
@@ -273,6 +278,14 @@ void USmokeSimulationComponent::DispatchSmokeSimulation(float DeltaTime)
 		SliceRequest.OutputRenderTarget = DensitySlicePreview;
 		SliceRequest.DebugRenderer = &DebugRenderer;
 		SliceRequestPtr = &SliceRequest;
+	}
+	else if (IsVolumeRenderDebugMode())
+	{
+		EnsureVolumeRenderTarget();
+		VolumeRenderRequest.RenderSettings = BuildSmokeRenderSettings();
+		VolumeRenderRequest.OutputRenderTarget = VolumeRenderPreview;
+		VolumeRenderRequest.Renderer = &Renderer;
+		VolumeRenderRequestPtr = &VolumeRenderRequest;
 	}
 
 	const uint64 FrameIndex = GridDispatchFrameIndex++;
@@ -287,7 +300,8 @@ void USmokeSimulationComponent::DispatchSmokeSimulation(float DeltaTime)
 		CurrentGridDesc,
 		SolverSettings,
 		FrameIndex,
-		SliceRequestPtr);
+		SliceRequestPtr,
+		VolumeRenderRequestPtr);
 
 	if (IsFieldSliceDebugMode())
 	{
@@ -297,6 +311,12 @@ void USmokeSimulationComponent::DispatchSmokeSimulation(float DeltaTime)
 			static_cast<int32>(SliceAxis),
 			SliceIndex,
 			*SliceDimensions.ToString(),
+			static_cast<unsigned long long>(FrameIndex));
+	}
+	else if (IsVolumeRenderDebugMode())
+	{
+		UE_LOG(LogSmokeCharacter, Verbose, TEXT("Smoke volume render dispatched. Resolution=%s Frame=%llu"),
+			*VolumePreviewResolution.ToString(),
 			static_cast<unsigned long long>(FrameIndex));
 	}
 }
@@ -315,6 +335,11 @@ bool USmokeSimulationComponent::IsFieldSliceDebugMode() const
 		|| DebugMode == ESmokeDebugMode::Divergence;
 }
 
+bool USmokeSimulationComponent::IsVolumeRenderDebugMode() const
+{
+	return DebugMode == ESmokeDebugMode::VolumeRender;
+}
+
 ESmokeDebugField USmokeSimulationComponent::GetDebugField() const
 {
 	switch (DebugMode)
@@ -329,6 +354,63 @@ ESmokeDebugField USmokeSimulationComponent::GetDebugField() const
 	default:
 		return ESmokeDebugField::Density;
 	}
+}
+
+FSmokeRenderSettings USmokeSimulationComponent::BuildSmokeRenderSettings() const
+{
+	FSmokeRenderSettings Settings;
+	Settings.OutputDimensions = FIntPoint(
+		FMath::Max(1, VolumePreviewResolution.X),
+		FMath::Max(1, VolumePreviewResolution.Y));
+	Settings.SmokeColor = SmokeColor;
+	Settings.DensityScale = RenderDensityScale;
+	Settings.Absorption = RenderAbsorption;
+	Settings.LightDirection = RenderLightDirection;
+	Settings.LightColor = RenderLightColor;
+	Settings.LightIntensity = RenderLightIntensity;
+	Settings.AmbientIntensity = RenderAmbientIntensity;
+	Settings.ViewStepCount = RenderViewStepCount;
+	Settings.LightStepCount = RenderLightStepCount;
+
+	if (const UWorld* World = GetWorld())
+	{
+		if (const APlayerController* PlayerController = World->GetFirstPlayerController())
+		{
+			if (const APlayerCameraManager* CameraManager = PlayerController->PlayerCameraManager)
+			{
+				const FMinimalViewInfo& ViewInfo = CameraManager->GetCameraCacheView();
+				const FRotationMatrix CameraBasis(ViewInfo.Rotation);
+				Settings.CameraWorldPosition = ViewInfo.Location;
+				Settings.CameraForward = CameraBasis.GetScaledAxis(EAxis::X);
+				Settings.CameraRight = CameraBasis.GetScaledAxis(EAxis::Y);
+				Settings.CameraUp = CameraBasis.GetScaledAxis(EAxis::Z);
+				Settings.VerticalFovDegrees = ViewInfo.FOV;
+				return Settings;
+			}
+		}
+	}
+
+	const AActor* Owner = GetOwner();
+	const FTransform OwnerTransform = Owner ? Owner->GetActorTransform() : FTransform::Identity;
+	Settings.CameraWorldPosition = OwnerTransform.TransformPosition(FVector(-250.0, 0.0, 80.0));
+	Settings.CameraForward = (GetDomainOrigin() - Settings.CameraWorldPosition).GetSafeNormal();
+	if (Settings.CameraForward.IsNearlyZero())
+	{
+		Settings.CameraForward = FVector::ForwardVector;
+	}
+
+	Settings.CameraRight = FVector::CrossProduct(FVector::UpVector, Settings.CameraForward).GetSafeNormal();
+	if (Settings.CameraRight.IsNearlyZero())
+	{
+		Settings.CameraRight = FVector::RightVector;
+	}
+
+	Settings.CameraUp = FVector::CrossProduct(Settings.CameraForward, Settings.CameraRight).GetSafeNormal();
+	if (Settings.CameraUp.IsNearlyZero())
+	{
+		Settings.CameraUp = FVector::UpVector;
+	}
+	return Settings;
 }
 
 void USmokeSimulationComponent::EnsureDensitySliceRenderTarget()
@@ -349,6 +431,28 @@ void USmokeSimulationComponent::EnsureDensitySliceRenderTarget()
 	DensitySlicePreview->bAutoGenerateMips = false;
 	DensitySlicePreview->InitCustomFormat(SliceDimensions.X, SliceDimensions.Y, PF_FloatRGBA, false);
 	DensitySlicePreview->UpdateResourceImmediate(true);
+}
+
+void USmokeSimulationComponent::EnsureVolumeRenderTarget()
+{
+	const FIntPoint OutputDimensions(
+		FMath::Max(1, VolumePreviewResolution.X),
+		FMath::Max(1, VolumePreviewResolution.Y));
+	const bool bNeedsNewTarget = !VolumeRenderPreview
+		|| VolumeRenderPreview->SizeX != OutputDimensions.X
+		|| VolumeRenderPreview->SizeY != OutputDimensions.Y;
+
+	if (!bNeedsNewTarget)
+	{
+		return;
+	}
+
+	VolumeRenderPreview = NewObject<UTextureRenderTarget2D>(this, TEXT("SmokeVolumeRenderPreview"), RF_Transient);
+	VolumeRenderPreview->RenderTargetFormat = RTF_RGBA16f;
+	VolumeRenderPreview->ClearColor = FLinearColor(0.0f, 0.0f, 0.0f, 0.0f);
+	VolumeRenderPreview->bAutoGenerateMips = false;
+	VolumeRenderPreview->InitCustomFormat(OutputDimensions.X, OutputDimensions.Y, PF_FloatRGBA, false);
+	VolumeRenderPreview->UpdateResourceImmediate(true);
 }
 
 void USmokeSimulationComponent::RegisterDensitySliceDebugDraw()
@@ -376,30 +480,25 @@ void USmokeSimulationComponent::UnregisterDensitySliceDebugDraw()
 
 void USmokeSimulationComponent::DrawDensitySliceOverlay(UCanvas* Canvas, APlayerController* PlayerController)
 {
-	if (!IsFieldSliceDebugMode() || !DensitySlicePreview || !Canvas)
+	if (!Canvas)
 	{
 		return;
 	}
 
-	FTexture* RenderTargetTexture = DensitySlicePreview->GetResource();
-	if (!RenderTargetTexture)
+	UTextureRenderTarget2D* PreviewTarget = nullptr;
+	FString Label;
+	FVector2D DrawPosition(24.0f, 56.0f);
+	FVector2D DrawSize;
+
+	if (IsFieldSliceDebugMode() && DensitySlicePreview)
 	{
-		return;
-	}
+		PreviewTarget = DensitySlicePreview;
+		const FIntPoint SliceDimensions = FSmokeGrid::GetSliceDimensions(GetEffectiveGridResolution(), static_cast<int32>(SliceAxis));
+		const float Scale = FMath::Max(1.0f, DensitySliceOverlayScale);
+		DrawSize = FVector2D(
+			static_cast<float>(SliceDimensions.X) * Scale,
+			static_cast<float>(SliceDimensions.Y) * Scale);
 
-	const FIntPoint SliceDimensions = FSmokeGrid::GetSliceDimensions(GetEffectiveGridResolution(), static_cast<int32>(SliceAxis));
-	const float Scale = FMath::Max(1.0f, DensitySliceOverlayScale);
-	const FVector2D DrawPosition(24.0f, 56.0f);
-	const FVector2D DrawSize(
-		static_cast<float>(SliceDimensions.X) * Scale,
-		static_cast<float>(SliceDimensions.Y) * Scale);
-
-	FCanvasTileItem TileItem(DrawPosition, RenderTargetTexture, DrawSize, FLinearColor::White);
-	TileItem.BlendMode = SE_BLEND_Opaque;
-	Canvas->DrawItem(TileItem);
-
-	if (GEngine && GEngine->GetSmallFont())
-	{
 		const TCHAR* FieldName = TEXT("Density");
 		switch (GetDebugField())
 		{
@@ -417,13 +516,42 @@ void USmokeSimulationComponent::DrawDensitySliceOverlay(UCanvas* Canvas, APlayer
 			break;
 		}
 
-		const FString Label = FString::Printf(
+		Label = FString::Printf(
 			TEXT("Smoke %s Slice  Axis=%d  Index=%d  Resolution=%s"),
 			FieldName,
 			static_cast<int32>(SliceAxis),
 			SliceIndex,
 			*GetEffectiveGridResolution().ToString());
+	}
+	else if (IsVolumeRenderDebugMode() && VolumeRenderPreview)
+	{
+		PreviewTarget = VolumeRenderPreview;
+		const float Scale = FMath::Max(0.1f, VolumePreviewOverlayScale);
+		DrawSize = FVector2D(
+			static_cast<float>(VolumeRenderPreview->SizeX) * Scale,
+			static_cast<float>(VolumeRenderPreview->SizeY) * Scale);
+		Label = FString::Printf(
+			TEXT("Smoke Volume Render  Resolution=%s"),
+			*GetEffectiveGridResolution().ToString());
+	}
 
+	if (!PreviewTarget)
+	{
+		return;
+	}
+
+	FTexture* RenderTargetTexture = PreviewTarget->GetResource();
+	if (!RenderTargetTexture)
+	{
+		return;
+	}
+
+	FCanvasTileItem TileItem(DrawPosition, RenderTargetTexture, DrawSize, FLinearColor::White);
+	TileItem.BlendMode = IsVolumeRenderDebugMode() ? SE_BLEND_Translucent : SE_BLEND_Opaque;
+	Canvas->DrawItem(TileItem);
+
+	if (GEngine && GEngine->GetSmallFont())
+	{
 		FCanvasTextItem TextItem(DrawPosition + FVector2D(0.0f, -20.0f), FText::FromString(Label), GEngine->GetSmallFont(), FLinearColor::White);
 		TextItem.EnableShadow(FLinearColor::Black);
 		Canvas->DrawItem(TextItem);
@@ -459,6 +587,11 @@ void USmokeSimulationComponent::PostEditChangeProperty(FPropertyChangedEvent& Pr
 	else if (PropertyName == GET_MEMBER_NAME_CHECKED(USmokeSimulationComponent, SliceIndex))
 	{
 		ClampDensitySliceIndex();
+	}
+
+	if (PropertyName == GET_MEMBER_NAME_CHECKED(USmokeSimulationComponent, VolumePreviewResolution))
+	{
+		VolumeRenderPreview = nullptr;
 	}
 }
 #endif

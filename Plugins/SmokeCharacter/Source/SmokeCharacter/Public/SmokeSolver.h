@@ -5,8 +5,10 @@
 #include "CoreMinimal.h"
 #include "SmokeDebugRenderer.h"
 #include "SmokeGrid.h"
+#include "SmokeRenderer.h"
 
 class FSmokeDebugRenderer;
+class FSmokeRenderer;
 class UTextureRenderTarget2D;
 
 struct FSmokeSolverSettings
@@ -29,6 +31,13 @@ struct FSmokeDensitySliceRequest
 	const FSmokeDebugRenderer* DebugRenderer = nullptr;
 };
 
+struct FSmokeVolumeRenderRequest
+{
+	FSmokeRenderSettings RenderSettings;
+	UTextureRenderTarget2D* OutputRenderTarget = nullptr;
+	const FSmokeRenderer* Renderer = nullptr;
+};
+
 class SMOKECHARACTER_API FSmokeSolver
 {
 public:
@@ -37,7 +46,8 @@ public:
 		const FSmokeGridDesc& GridDesc,
 		const FSmokeSolverSettings& Settings,
 		uint64 FrameIndex,
-		const FSmokeDensitySliceRequest* SliceRequest);
+		const FSmokeDensitySliceRequest* SliceRequest,
+		const FSmokeVolumeRenderRequest* VolumeRenderRequest);
 
 private:
 	FSmokeGridResources GridResources;

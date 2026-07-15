@@ -1,0 +1,146 @@
+#include "/Engine/Public/Platform.ush"
+
+int3 GridResolution;
+int2 OutputDimensions;
+float3 DomainWorldMin;
+float3 DomainWorldMax;
+float3 CameraWorldPosition;
+float3 CameraForward;
+float3 CameraRight;
+float3 CameraUp;
+float TanHalfVerticalFov;
+float AspectRatio;
+float3 SmokeColor;
+float DensityScale;
+float Absorption;
+float3 LightDirection;
+float3 LightColor;
+float LightIntensity;
+float AmbientIntensity;
+int ViewStepCount;
+int LightStepCount;
+Texture3D<float> DensityTexture;
+RWTexture2D<float4> OutVolume;
+
+float SmokeRaymarch_SampleDensity(float3 WorldPosition)
+{
+	float3 uvw = (WorldPosition - DomainWorldMin) / max(DomainWorldMax - DomainWorldMin, 0.001f.xxx);
+	if (any(uvw < 0.0f.xxx) || any(uvw > 1.0f.xxx))
+	{
+		return 0.0f;
+	}
+
+	int3 cell = clamp(int3(uvw * float3(GridResolution)), int3(0, 0, 0), GridResolution - 1);
+	return DensityTexture.Load(int4(cell, 0)) * DensityScale;
+}
+
+bool SmokeRaymarch_IntersectAabb(float3 RayOrigin, float3 RayDirection, out float NearT, out float FarT)
+{
+	float3 directionSign = lerp(-1.0f.xxx, 1.0f.xxx, step(0.0f.xxx, RayDirection));
+	float3 safeDirection = max(abs(RayDirection), 0.00001f.xxx) * directionSign;
+	float3 invDirection = 1.0f / safeDirection;
+	float3 t0 = (DomainWorldMin - RayOrigin) * invDirection;
+	float3 t1 = (DomainWorldMax - RayOrigin) * invDirection;
+	float3 tMin = min(t0, t1);
+	float3 tMax = max(t0, t1);
+
+	NearT = max(max(tMin.x, tMin.y), tMin.z);
+	FarT = min(min(tMax.x, tMax.y), tMax.z);
+	return FarT >= max(NearT, 0.0f);
+}
+
+float SmokeRaymarch_LightTransmittance(float3 WorldPosition)
+{
+	if (LightStepCount <= 0)
+	{
+		return 1.0f;
+	}
+
+	float nearT;
+	float farT;
+	float3 lightRay = normalize(LightDirection);
+	if (!SmokeRaymarch_IntersectAabb(WorldPosition, lightRay, nearT, farT))
+	{
+		return 1.0f;
+	}
+
+	float maxDistance = max(farT, 0.0f);
+	float stepLength = maxDistance / max(LightStepCount, 1);
+	float opticalDepth = 0.0f;
+
+	[loop]
+	for (int stepIndex = 0; stepIndex < LightStepCount; ++stepIndex)
+	{
+		float sampleT = (float(stepIndex) + 0.5f) * stepLength;
+		float density = SmokeRaymarch_SampleDensity(WorldPosition + lightRay * sampleT);
+		opticalDepth += density * stepLength;
+	}
+
+	return exp(-Absorption * opticalDepth * 0.015f);
+}
+
+[numthreads(8, 8, 1)]
+void RaymarchCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	if (DispatchThreadId.x >= uint(OutputDimensions.x) || DispatchThreadId.y >= uint(OutputDimensions.y))
+	{
+		return;
+	}
+
+	float2 pixelUv = (float2(DispatchThreadId.xy) + 0.5f) / max(float2(OutputDimensions), 1.0f.xx);
+	float2 ndc = pixelUv * 2.0f - 1.0f;
+	ndc.y *= -1.0f;
+
+	float3 rayDirection = normalize(
+		CameraForward
+		+ CameraRight * ndc.x * AspectRatio * TanHalfVerticalFov
+		+ CameraUp * ndc.y * TanHalfVerticalFov);
+
+	float nearT;
+	float farT;
+	if (!SmokeRaymarch_IntersectAabb(CameraWorldPosition, rayDirection, nearT, farT))
+	{
+		OutVolume[DispatchThreadId.xy] = float4(0.0f, 0.0f, 0.0f, 0.0f);
+		return;
+	}
+
+	nearT = max(nearT, 0.0f);
+	float rayLength = max(farT - nearT, 0.0f);
+	if (rayLength <= 0.0f)
+	{
+		OutVolume[DispatchThreadId.xy] = float4(0.0f, 0.0f, 0.0f, 0.0f);
+		return;
+	}
+
+	int clampedStepCount = clamp(ViewStepCount, 8, 256);
+	float stepLength = rayLength / clampedStepCount;
+	float transmittance = 1.0f;
+	float3 accumulatedColor = 0.0f.xxx;
+
+	[loop]
+	for (int stepIndex = 0; stepIndex < clampedStepCount; ++stepIndex)
+	{
+		float sampleT = nearT + (float(stepIndex) + 0.5f) * stepLength;
+		float3 samplePosition = CameraWorldPosition + rayDirection * sampleT;
+		float density = SmokeRaymarch_SampleDensity(samplePosition);
+		if (density <= 0.0001f)
+		{
+			continue;
+		}
+
+		float lightTransmittance = SmokeRaymarch_LightTransmittance(samplePosition);
+		float lighting = AmbientIntensity + lightTransmittance * LightIntensity;
+		float3 sampleColor = SmokeColor * LightColor * lighting;
+		float alpha = 1.0f - exp(-Absorption * density * stepLength * 0.015f);
+		accumulatedColor += transmittance * alpha * sampleColor;
+		transmittance *= 1.0f - alpha;
+
+		if (transmittance < 0.01f)
+		{
+			break;
+		}
+	}
+
+	float outputAlpha = saturate(1.0f - transmittance);
+	OutVolume[DispatchThreadId.xy] = float4(accumulatedColor, outputAlpha);
+}

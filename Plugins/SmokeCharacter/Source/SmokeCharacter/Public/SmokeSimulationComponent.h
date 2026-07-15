@@ -6,6 +6,7 @@
 #include "Components/ActorComponent.h"
 #include "SmokeDebugRenderer.h"
 #include "SmokeGrid.h"
+#include "SmokeRenderer.h"
 #include "SmokeSolver.h"
 #include "SmokeSimulationComponent.generated.h"
 
@@ -22,7 +23,8 @@ enum class ESmokeDebugMode : uint8
 	DensitySlice UMETA(DisplayName = "Density Slice"),
 	VelocityMagnitude UMETA(DisplayName = "Velocity Magnitude"),
 	Pressure UMETA(DisplayName = "Pressure"),
-	Divergence UMETA(DisplayName = "Divergence")
+	Divergence UMETA(DisplayName = "Divergence"),
+	VolumeRender UMETA(DisplayName = "Volume Render")
 };
 
 UENUM(BlueprintType)
@@ -104,6 +106,42 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Smoke|Debug|Field Slice")
 	TObjectPtr<UTextureRenderTarget2D> DensitySlicePreview = nullptr;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Render")
+	FLinearColor SmokeColor = FLinearColor(0.72f, 0.82f, 0.88f, 1.0f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Render", meta = (ClampMin = "0.0"))
+	float RenderDensityScale = 2.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Render", meta = (ClampMin = "0.0"))
+	float RenderAbsorption = 1.2f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Render")
+	FVector RenderLightDirection = FVector(-0.4, -0.3, -0.85);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Render")
+	FLinearColor RenderLightColor = FLinearColor::White;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Render", meta = (ClampMin = "0.0"))
+	float RenderLightIntensity = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Render", meta = (ClampMin = "0.0"))
+	float RenderAmbientIntensity = 0.18f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Render", meta = (ClampMin = "8", ClampMax = "256"))
+	int32 RenderViewStepCount = 96;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Render", meta = (ClampMin = "0", ClampMax = "64"))
+	int32 RenderLightStepCount = 12;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Render|Preview", meta = (ClampMin = "1"))
+	FIntPoint VolumePreviewResolution = FIntPoint(512, 512);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Render|Preview", meta = (ClampMin = "0.1"))
+	float VolumePreviewOverlayScale = 1.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Smoke|Render|Preview")
+	TObjectPtr<UTextureRenderTarget2D> VolumeRenderPreview = nullptr;
+
 	UFUNCTION(BlueprintCallable, Category = "Smoke")
 	void SetSimulationEnabled(bool bEnabled);
 
@@ -150,8 +188,11 @@ private:
 	void DispatchSmokeSimulation(float DeltaTime);
 	void ClampDensitySliceIndex();
 	bool IsFieldSliceDebugMode() const;
+	bool IsVolumeRenderDebugMode() const;
 	ESmokeDebugField GetDebugField() const;
 	void EnsureDensitySliceRenderTarget();
+	void EnsureVolumeRenderTarget();
+	FSmokeRenderSettings BuildSmokeRenderSettings() const;
 	void RegisterDensitySliceDebugDraw();
 	void UnregisterDensitySliceDebugDraw();
 	void DrawDensitySliceOverlay(UCanvas* Canvas, class APlayerController* PlayerController);
@@ -160,6 +201,7 @@ private:
 	FSmokeGridDesc CurrentGridDesc;
 	FSmokeSolver Solver;
 	FSmokeDebugRenderer DebugRenderer;
+	FSmokeRenderer Renderer;
 	FDelegateHandle DensitySliceDebugDrawHandle;
 	bool bGridResourcesDirty = true;
 	uint64 GridDispatchFrameIndex = 0;
