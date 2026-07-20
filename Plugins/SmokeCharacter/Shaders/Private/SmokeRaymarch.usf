@@ -1,4 +1,5 @@
 #include "/Engine/Public/Platform.ush"
+#include "/Engine/Private/Common.ush"
 
 int3 GridResolution;
 int2 OutputDimensions;
@@ -19,8 +20,12 @@ float LightIntensity;
 float AmbientIntensity;
 int ViewStepCount;
 int LightStepCount;
+int bOccludeWithSceneDepth;
 Texture3D<float> DensityTexture;
 RWTexture2D<float4> OutVolume;
+Texture2D SceneColorTexture;
+SamplerState SceneColorSampler;
+Texture2D<float> SceneDepthTexture;
 
 float SmokeRaymarch_SampleDensity(float3 WorldPosition)
 {
@@ -143,4 +148,91 @@ void RaymarchCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 	float outputAlpha = saturate(1.0f - transmittance);
 	OutVolume[DispatchThreadId.xy] = float4(accumulatedColor, outputAlpha);
+}
+
+void CompositePS(
+	noperspective float4 UVAndScreenPos : TEXCOORD0,
+	in FStereoPSInput StereoInput,
+	float4 SvPosition : SV_POSITION,
+	out float4 OutColor : SV_Target0)
+{
+	const ViewState PrimaryViewState = GetPrimaryView();
+	uint2 pixel = uint2(SvPosition.xy);
+	uint sceneColorWidth;
+	uint sceneColorHeight;
+	SceneColorTexture.GetDimensions(sceneColorWidth, sceneColorHeight);
+	float2 sceneColorDimensions = float2(sceneColorWidth, sceneColorHeight);
+	float2 sceneUv = (SvPosition.xy + 0.5f) / max(sceneColorDimensions, 1.0f.xx);
+	float4 sceneColor = SceneColorTexture.SampleLevel(SceneColorSampler, sceneUv, 0);
+
+	float deviceZ = SceneDepthTexture.Load(int3(pixel, 0)).r;
+	float sceneDepth = ConvertFromDeviceZ(deviceZ);
+	float2 screenPosition = SvPositionToScreenPosition(SvPosition).xy;
+	float3 translatedOpaqueWorldPosition = mul(float4(GetScreenPositionForProjectionType(screenPosition, sceneDepth), sceneDepth, 1.0f), PrimaryViewState.ScreenToTranslatedWorld).xyz;
+	float3 preViewTranslation = DFHackToFloat(PrimaryViewState.PreViewTranslation);
+	float3 cameraWorldPosition = PrimaryViewState.TranslatedWorldCameraOrigin - preViewTranslation;
+	float3 opaqueWorldPosition = translatedOpaqueWorldPosition - preViewTranslation;
+	float3 opaqueRay = opaqueWorldPosition - cameraWorldPosition;
+	float opaqueRayDistance = length(opaqueRay);
+	float3 rayDirection = opaqueRay / max(opaqueRayDistance, 0.0001f);
+
+	float nearT;
+	float farT;
+	if (!SmokeRaymarch_IntersectAabb(cameraWorldPosition, rayDirection, nearT, farT))
+	{
+		OutColor = sceneColor;
+		return;
+	}
+
+	nearT = max(nearT, 0.0f);
+	if (bOccludeWithSceneDepth != 0)
+	{
+		farT = min(farT, opaqueRayDistance);
+	}
+	float rayLength = max(farT - nearT, 0.0f);
+	if (rayLength <= 0.0f)
+	{
+		OutColor = sceneColor;
+		return;
+	}
+
+	int clampedStepCount = clamp(ViewStepCount, 8, 256);
+	float stepLength = rayLength / clampedStepCount;
+	float transmittance = 1.0f;
+	float3 accumulatedColor = 0.0f.xxx;
+
+	[loop]
+	for (int stepIndex = 0; stepIndex < clampedStepCount; ++stepIndex)
+	{
+		float sampleT = nearT + (float(stepIndex) + 0.5f) * stepLength;
+		float3 samplePosition = cameraWorldPosition + rayDirection * sampleT;
+		float density = SmokeRaymarch_SampleDensity(samplePosition);
+		if (density <= 0.0001f)
+		{
+			continue;
+		}
+
+		float lightTransmittance = SmokeRaymarch_LightTransmittance(samplePosition);
+		float lighting = AmbientIntensity + lightTransmittance * LightIntensity;
+		float3 sampleColor = SmokeColor * LightColor * lighting;
+		float alpha = 1.0f - exp(-Absorption * density * stepLength * 0.015f);
+		accumulatedColor += transmittance * alpha * sampleColor;
+		transmittance *= 1.0f - alpha;
+
+		if (transmittance < 0.01f)
+		{
+			break;
+		}
+	}
+
+	OutColor = float4(accumulatedColor + sceneColor.rgb * transmittance, sceneColor.a);
+}
+
+void CompositeMinimalPS(
+	noperspective float4 UVAndScreenPos : TEXCOORD0,
+	in FStereoPSInput StereoInput,
+	float4 SvPosition : SV_POSITION,
+	out float4 OutColor : SV_Target0)
+{
+	OutColor = float4(0.0f, 1.0f, 0.0f, 1.0f);
 }

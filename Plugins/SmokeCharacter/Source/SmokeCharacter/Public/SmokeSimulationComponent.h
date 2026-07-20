@@ -133,6 +133,15 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Render", meta = (ClampMin = "0", ClampMax = "64"))
 	int32 RenderLightStepCount = 12;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Render")
+	bool bEnableWorldSpaceVolumeRender = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Render")
+	bool bOccludeWorldSpaceVolumeWithSceneDepth = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Render|Preview")
+	bool bEnableVolumePreviewOverlay = false;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoke|Render|Preview", meta = (ClampMin = "1"))
 	FIntPoint VolumePreviewResolution = FIntPoint(512, 512);
 

@@ -27,6 +27,7 @@ USmokeSimulationComponent::USmokeSimulationComponent()
 void USmokeSimulationComponent::OnRegister()
 {
 	Super::OnRegister();
+	FSmokeRenderer::InitializeWorldRenderer();
 	MarkGridResourcesDirty();
 	RegisterDensitySliceDebugDraw();
 	LogLifecycleEvent(TEXT("registered"));
@@ -35,6 +36,10 @@ void USmokeSimulationComponent::OnRegister()
 void USmokeSimulationComponent::OnUnregister()
 {
 	LogLifecycleEvent(TEXT("unregistered"));
+	if (const UWorld* World = GetWorld())
+	{
+		FSmokeRenderer::RemoveWorldRenderState(World->GetUniqueID());
+	}
 	UnregisterDensitySliceDebugDraw();
 	Super::OnUnregister();
 }
@@ -63,6 +68,11 @@ void USmokeSimulationComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	const bool bShouldDispatchGrid = bSimulationEnabled && World && (World->IsGameWorld() || DebugMode == ESmokeDebugMode::Timing || IsFieldSliceDebugMode() || IsVolumeRenderDebugMode());
 	if (bShouldDispatchGrid)
 	{
+		if (IsVolumeRenderDebugMode() && bEnableWorldSpaceVolumeRender)
+		{
+			FSmokeRenderer::InitializeWorldRenderer();
+		}
+
 		if (bGridResourcesDirty)
 		{
 			ReinitializeGridResources();
@@ -281,9 +291,14 @@ void USmokeSimulationComponent::DispatchSmokeSimulation(float DeltaTime)
 	}
 	else if (IsVolumeRenderDebugMode())
 	{
-		EnsureVolumeRenderTarget();
+		if (bEnableVolumePreviewOverlay)
+		{
+			EnsureVolumeRenderTarget();
+		}
+		const UWorld* World = GetWorld();
+		VolumeRenderRequest.WorldId = World ? World->GetUniqueID() : 0;
 		VolumeRenderRequest.RenderSettings = BuildSmokeRenderSettings();
-		VolumeRenderRequest.OutputRenderTarget = VolumeRenderPreview;
+		VolumeRenderRequest.OutputRenderTarget = bEnableVolumePreviewOverlay ? VolumeRenderPreview : nullptr;
 		VolumeRenderRequest.Renderer = &Renderer;
 		VolumeRenderRequestPtr = &VolumeRenderRequest;
 	}
@@ -371,6 +386,9 @@ FSmokeRenderSettings USmokeSimulationComponent::BuildSmokeRenderSettings() const
 	Settings.AmbientIntensity = RenderAmbientIntensity;
 	Settings.ViewStepCount = RenderViewStepCount;
 	Settings.LightStepCount = RenderLightStepCount;
+	Settings.bEnableWorldSpaceRender = bEnableWorldSpaceVolumeRender;
+	Settings.bEnablePreviewRender = bEnableVolumePreviewOverlay;
+	Settings.bOccludeWithSceneDepth = bOccludeWorldSpaceVolumeWithSceneDepth;
 
 	if (const UWorld* World = GetWorld())
 	{
@@ -523,7 +541,7 @@ void USmokeSimulationComponent::DrawDensitySliceOverlay(UCanvas* Canvas, APlayer
 			SliceIndex,
 			*GetEffectiveGridResolution().ToString());
 	}
-	else if (IsVolumeRenderDebugMode() && VolumeRenderPreview)
+	else if (IsVolumeRenderDebugMode() && bEnableVolumePreviewOverlay && VolumeRenderPreview)
 	{
 		PreviewTarget = VolumeRenderPreview;
 		const float Scale = FMath::Max(0.1f, VolumePreviewOverlayScale);

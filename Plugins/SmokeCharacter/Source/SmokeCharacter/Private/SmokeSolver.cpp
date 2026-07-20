@@ -369,15 +369,20 @@ void FSmokeSolver::DispatchSimulation(
 		? SliceRequest->OutputRenderTarget->GameThread_GetRenderTargetResource()
 		: nullptr;
 	const FSmokeVolumeRenderRequest VolumeRenderRequestCopy = VolumeRenderRequest ? *VolumeRenderRequest : FSmokeVolumeRenderRequest();
-	const bool bRenderVolume = VolumeRenderRequest
+	const bool bRenderVolumePreview = VolumeRenderRequest
 		&& VolumeRenderRequest->Renderer
-		&& VolumeRenderRequest->OutputRenderTarget;
-	FTextureRenderTargetResource* VolumeOutputResource = bRenderVolume
+		&& VolumeRenderRequest->OutputRenderTarget
+		&& VolumeRenderRequest->RenderSettings.bEnablePreviewRender;
+	const bool bPublishWorldVolume = VolumeRenderRequest
+		&& VolumeRenderRequest->Renderer
+		&& VolumeRenderRequest->WorldId != 0
+		&& VolumeRenderRequest->RenderSettings.bEnableWorldSpaceRender;
+	FTextureRenderTargetResource* VolumeOutputResource = bRenderVolumePreview
 		? VolumeRenderRequest->OutputRenderTarget->GameThread_GetRenderTargetResource()
 		: nullptr;
 
 	ENQUEUE_RENDER_COMMAND(SmokeSolverDensityAdvection)(
-		[Resources, GridDesc, SolverSettings, FrameIndex, SliceRequestCopy, bRenderSlice, SliceOutputResource, VolumeRenderRequestCopy, bRenderVolume, VolumeOutputResource, bResetRequested](FRHICommandListImmediate& RHICmdList)
+		[Resources, GridDesc, SolverSettings, FrameIndex, SliceRequestCopy, bRenderSlice, SliceOutputResource, VolumeRenderRequestCopy, bRenderVolumePreview, bPublishWorldVolume, VolumeOutputResource, bResetRequested](FRHICommandListImmediate& RHICmdList)
 		{
 			if (bResetRequested)
 			{
@@ -495,7 +500,7 @@ void FSmokeSolver::DispatchSimulation(
 				}
 			}
 
-			if (bRenderVolume && VolumeOutputResource && VolumeRenderRequestCopy.Renderer)
+			if (bRenderVolumePreview && VolumeOutputResource && VolumeRenderRequestCopy.Renderer)
 			{
 				FTextureRHIRef VolumeOutputRHI = VolumeOutputResource->GetRenderTargetTexture();
 				if (VolumeOutputRHI.IsValid())
@@ -512,6 +517,23 @@ void FSmokeSolver::DispatchSimulation(
 			Resources->ActivePressureIndex = FinalPressureIndex;
 			Resources->SwapDensityBuffers();
 			GraphBuilder.Execute();
+
+			if (bPublishWorldVolume && VolumeRenderRequestCopy.Renderer)
+			{
+				FSmokeWorldRenderState State;
+				State.WorldId = VolumeRenderRequestCopy.WorldId;
+				State.FrameIndex = FrameIndex;
+				State.GridDesc = GridDesc;
+				State.Settings = VolumeRenderRequestCopy.RenderSettings;
+				State.DensityTarget = Resources->DensityTextures[Resources->ActiveDensityIndex];
+				UE_LOG(LogSmokeCharacter, Log, TEXT("Smoke world render state publish requested. WorldId=%u Frame=%llu Grid=%s DensityValid=%s WorldSpaceRender=%s"),
+					State.WorldId,
+					static_cast<unsigned long long>(State.FrameIndex),
+					*GridDesc.ToLogString(),
+					State.DensityTarget.IsValid() ? TEXT("true") : TEXT("false"),
+					State.Settings.bEnableWorldSpaceRender ? TEXT("true") : TEXT("false"));
+				FSmokeRenderer::PublishWorldRenderState_RenderThread(State);
+			}
 		});
 
 	if (SolverSettings.bVerboseLogging)

@@ -33,6 +33,7 @@ struct FSmokeDensitySliceRequest
 
 struct FSmokeVolumeRenderRequest
 {
+	uint32 WorldId = 0;
 	FSmokeRenderSettings RenderSettings;
 	UTextureRenderTarget2D* OutputRenderTarget = nullptr;
 	const FSmokeRenderer* Renderer = nullptr;

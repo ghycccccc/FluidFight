@@ -19,7 +19,8 @@ public class SmokeCharacter : ModuleRules
 
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
-			"Projects"
+			"Projects",
+			"Renderer"
 		});
 	}
 }

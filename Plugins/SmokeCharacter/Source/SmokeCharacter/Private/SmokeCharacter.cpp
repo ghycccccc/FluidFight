@@ -6,6 +6,7 @@
 #include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
 #include "ShaderCore.h"
+#include "SmokeRenderer.h"
 
 DEFINE_LOG_CATEGORY(LogSmokeCharacter);
 
@@ -27,6 +28,7 @@ public:
 
 	virtual void ShutdownModule() override
 	{
+		FSmokeRenderer::ShutdownWorldRenderer();
 		UE_LOG(LogSmokeCharacter, Log, TEXT("SmokeCharacter module shut down."));
 	}
 };
